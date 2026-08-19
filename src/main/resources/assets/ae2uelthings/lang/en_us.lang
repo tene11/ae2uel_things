@@ -1,0 +1,27 @@
+# DISK (Deep Item Storage disK) Cells
+
+itemGroup.ae2uelthings=AE2 UEL Things
+
+item.ae2uelthings.disk_cell_1k.name=1k DISK Cell
+item.ae2uelthings.disk_cell_4k.name=4k DISK Cell
+item.ae2uelthings.disk_cell_16k.name=16k DISK Cell
+item.ae2uelthings.disk_cell_64k.name=64k DISK Cell
+
+item.ae2uelthings.disk_cell.1k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.4k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.16k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.64k.tooltip=Type-unlimited storage. Usable capacity: %s items
+
+item.ae2uelthings.disk_cell.used_bytes=Used: %s / %s bytes
+
+item.ae2uelthings.disk_housing.name=DISK Cell Housing
+
+item.ae2uelthings.disk_cell_fluid_1k.name=1k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_4k.name=4k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_16k.name=16k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_64k.name=64k DISK Fluid Cell
+
+item.ae2uelthings.disk_cell_fluid.1k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
+item.ae2uelthings.disk_cell_fluid.4k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
+item.ae2uelthings.disk_cell_fluid.16k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
+item.ae2uelthings.disk_cell_fluid.64k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB

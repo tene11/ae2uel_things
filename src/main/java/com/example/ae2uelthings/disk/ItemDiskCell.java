@@ -1,14 +1,14 @@
-package com.example.modid.disk;
+package com.example.ae2uelthings.disk;
 
 import appeng.api.AEApi;
 import appeng.api.config.FuzzyMode;
-import appeng.api.implementations.items.IStorageCell;
+import appeng.api.storage.ICellWorkbenchItem;
 import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IItemStorageChannel;
-import appeng.api.storage.data.IAEStack;
-import com.example.modid.Tags;
+import com.example.ae2uelthings.ExampleMod;
+import com.example.ae2uelthings.Tags;
+import com.example.ae2uelthings.disk.storage.DiskCellInventoryHandler;
 import net.minecraft.client.util.ITooltipFlag;
-import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -28,28 +28,25 @@ import java.util.List;
 /**
  * DISK (Deep Item Storage disK) セル本体。
  *
- * AE2 Things の「タイプ無制限」DISKセルを、AE2UELのrv6系アドオンAPI
- * ({@code IStorageCell} + AE2標準の {@code BasicCellHandler}) の枠内で
- * エミュレートするクリーンルーム実装。レシピ・独自NBTフォーマット・GUIは対象外。
+ * <p><b>修正メモ(重要):</b> 以前は {@code appeng.api.implementations.items.IStorageCell} を
+ * 実装していたが、これがAE2本体の {@code BasicCellHandler}(IStorageCell実装アイテムを
+ * 自動でセルとして認識する仕組み)にも同時に一致してしまい、
+ * {@code getCellInventory()} の単発クエリで実際に
+ * {@code appeng.me.storage.BasicCellInventoryHandler} が返ってくることをログで確認した。
+ * これはツールチップ表示だけでなく、AE2側の他の内部処理がこの単発クエリ経路を通る場合、
+ * 本来使いたい {@code DiskCellHandler}/{@code DiskCellInventoryHandler}(UUID外部化・
+ * タイプ無制限)ではなく、AE2標準のBasicCellHandler側の処理(63タイプ上限等)に
+ * すり替わってしまうリスクがあったということ。
  *
- * <p>{@code IStorageCell} は {@code ICellWorkbenchItem} を継承しているため、
- * Cell Workbench 関連のメソッド(isEditable / getUpgradesInventory /
- * getConfigInventory / getFuzzyMode / setFuzzyMode)も実装が必要。DISKセルは
- * タイプフィルターを持たない設計なので、ここでは最小限の実装にとどめている。</p>
- *
- * <h2>設計方針</h2>
- * <ul>
- *   <li>{@link #getTotalTypes(ItemStack)} を大きな固定値 ({@link #MAX_TYPES}) にすることで
- *       「タイプ無制限」を疑似的に実現する（真の無制限ではなく上限512タイプ）。</li>
- *   <li>{@link #getBytesPerType(ItemStack)} を最小値(1)にし、タイプ登録自体が容量を
- *       ほぼ消費しないようにする。</li>
- *   <li>{@link #getBytes(ItemStack)} はティアの実使用可能容量をそのまま返す。</li>
- * </ul>
+ * 液体版(ItemDiskFluidCell)は最初からIStorageCellを実装せず ICellWorkbenchItem のみ
+ * 実装することでこの曖昧さを回避できていたので、こちらも同じ形に揃えた。
+ * 容量関連のメソッド(getBytes等)はもうインターフェースの一部ではなく、
+ * DiskCellHandler側から直接呼び出す独自メソッドとして残している。
  */
-public class ItemDiskCell extends Item implements IStorageCell {
+public class ItemDiskCell extends Item implements ICellWorkbenchItem {
 
     /** 「タイプ無制限」を疑似的に表現するための上限値 */
-    private static final int MAX_TYPES = 512;
+    private static final int MAX_TYPES = Integer.MAX_VALUE;
     /** タイプ1つあたりの消費byte。最小値にして容量への影響をほぼ無くす */
     private static final int BYTES_PER_TYPE = 1;
 
@@ -60,9 +57,8 @@ public class ItemDiskCell extends Item implements IStorageCell {
         setTranslationKey(Tags.MOD_ID + ".disk_cell_" + tier.getSuffix());
         setRegistryName(tier.getItemId());
         setMaxStackSize(1);
-        // クリエイティブタブ未設定だとインベントリのどのタブにも表示されないため必須。
-        // ひとまず検索タブに表示させておく。専用タブやAE2のタブに寄せたい場合は変更する。
-        setCreativeTab(CreativeTabs.SEARCH);
+        // 専用クリエイティブタブに変更 (以前はCreativeTabs.SEARCHで検索しないと見つからなかった)
+        setCreativeTab(ModCreativeTab.INSTANCE);
     }
 
     public DiskTier getTier() {
@@ -70,54 +66,32 @@ public class ItemDiskCell extends Item implements IStorageCell {
     }
 
     // ------------------------------------------------------------------
-    // IStorageCell
+    // 容量関連 (IStorageCellのインターフェースではなく、DiskCellHandlerから直接呼ばれる独自メソッド)
     // ------------------------------------------------------------------
 
-    @Override
     public int getBytes(ItemStack cellItem) {
         return tier.getUsableBytes();
     }
 
-    @Override
     public int getBytesPerType(ItemStack cellItem) {
         return BYTES_PER_TYPE;
     }
 
-    @Override
     public int getTotalTypes(ItemStack cellItem) {
         return MAX_TYPES;
     }
 
-    @Override
-    public boolean isBlackListed(ItemStack itemStack, IAEStack iaeStack) {
-        // タイプ制限なし: DISKセルは何でも受け入れる
-        return false;
-    }
-
-    @Override
-    public boolean storableInStorageCell() {
-        // DISKセル自体は他のストレージセル内には格納不可
-        return false;
-    }
-
-    @Override
-    public boolean isStorageCell(ItemStack is) {
-        return true;
-    }
-
-    @Override
     public double getIdleDrain() {
         // TODO: ティアごとの待機時AE/t消費量を調整する。暫定値。
         return 1.0D + tier.ordinal();
     }
 
-    @Override
     public IStorageChannel<?> getChannel() {
         return AEApi.instance().storage().getStorageChannel(IItemStorageChannel.class);
     }
 
     // ------------------------------------------------------------------
-    // ICellWorkbenchItem (IStorageCell が継承)
+    // ICellWorkbenchItem
     // ------------------------------------------------------------------
 
     @Override
@@ -129,15 +103,11 @@ public class ItemDiskCell extends Item implements IStorageCell {
 
     @Override
     public IItemHandler getUpgradesInventory(ItemStack itemStack) {
-        // AE2側がnullを前提にせずスロット数等へ直接アクセスするため、
-        // nullではなく0スロットの空インベントリを返す必要がある。
-        // アップグレードカード機能自体は今回のスコープ外。
         return new ItemStackHandler(0);
     }
 
     @Override
     public IItemHandler getConfigInventory(ItemStack itemStack) {
-        // 同上。タイプフィルター機能は今回のスコープ外。
         return new ItemStackHandler(0);
     }
 
@@ -173,7 +143,29 @@ public class ItemDiskCell extends Item implements IStorageCell {
         tooltip.add(I18n.translateToLocalFormatted(
                 "item." + Tags.MOD_ID + ".disk_cell." + tier.getSuffix() + ".tooltip",
                 tier.getUsableBytes()));
-        tooltip.add(I18n.translateToLocal("item." + Tags.MOD_ID + ".disk_cell.disassemble_hint"));
+
+        long usedBytes = getUsedBytesForTooltip(stack);
+        if (usedBytes >= 0) {
+            tooltip.add(I18n.translateToLocalFormatted(
+                    "item." + Tags.MOD_ID + ".disk_cell.used_bytes",
+                    usedBytes, tier.getUsableBytes()));
+        }
+    }
+
+    private long getUsedBytesForTooltip(ItemStack stack) {
+        try {
+            Object handlerObj = AEApi.instance().registries().cell()
+                    .getCellInventory(stack, null, getChannel());
+            if (handlerObj instanceof DiskCellInventoryHandler) {
+                return ((DiskCellInventoryHandler) handlerObj).getUsedBytes();
+            }
+            ExampleMod.LOGGER.warn(
+                    "[{}] getUsedBytesForTooltip: 想定外のhandlerObjが返却されました: {}",
+                    Tags.MOD_ID, handlerObj == null ? "null" : handlerObj.getClass().getName());
+        } catch (Exception | LinkageError e) {
+            ExampleMod.LOGGER.warn("[{}] getUsedBytesForTooltip: 例外発生", Tags.MOD_ID, e);
+        }
+        return -1;
     }
 
     @Override
@@ -196,28 +188,13 @@ public class ItemDiskCell extends Item implements IStorageCell {
         return super.onItemRightClick(worldIn, playerIn, handIn);
     }
 
-    /**
-     * セルが空(中に何もアイテムが格納されていない)かどうかを判定する。
-     *
-     * 要ローカル検証: {@code ICellInventoryHandler}/{@code ICellInventory} の
-     * メソッド名がAE2UELの実際のAPIと一致するかは未確認。コンパイルエラーになった
-     * 場合は、IDEで {@code AEApi.instance().registries().cell().getCellInventory(...)}
-     * が返す型を辿り、実際に使えるメソッド(格納アイテム数や使用バイト数を取得するもの)
-     * に置き換えること。API不一致時は例外を握りつぶして「空ではない」扱いにし、
-     * 誤って分解してデータを消してしまう事故を避けるフェイルセーフにしている。
-     */
-    @SuppressWarnings("unchecked")
+    /** セルが空かどうかの判定。DiskCellHandlerが正しく使われていれば型は必ずDiskCellInventoryHandlerになる。 */
     private boolean isEmpty(ItemStack stack) {
         try {
             Object handlerObj = AEApi.instance().registries().cell()
                     .getCellInventory(stack, null, getChannel());
-            if (handlerObj instanceof appeng.api.storage.ICellInventoryHandler) {
-                appeng.api.storage.ICellInventoryHandler<?> cellHandler =
-                        (appeng.api.storage.ICellInventoryHandler<?>) handlerObj;
-                appeng.api.storage.ICellInventory<?> cellInv = cellHandler.getCellInv();
-                if (cellInv != null) {
-                    return cellInv.getStoredItemCount() == 0;
-                }
+            if (handlerObj instanceof DiskCellInventoryHandler) {
+                return ((DiskCellInventoryHandler) handlerObj).isEmpty();
             }
         } catch (Exception | LinkageError e) {
             // API不一致等、想定外の場合は安全側(=分解しない)に倒す
@@ -228,7 +205,7 @@ public class ItemDiskCell extends Item implements IStorageCell {
 
     /** 分解時に返す土台アイテム。ティアに関わらず常にHousing(空のDISKセル)に戻す。 */
     private ItemStack getDowngradeBaseStack() {
-        return new ItemStack(com.example.ae2uelthings.disk.ModDiskItems.DISK_HOUSING);
+        return new ItemStack(ModDiskItems.DISK_HOUSING);
     }
 
     private static ItemStack createComponentStack(int meta) {

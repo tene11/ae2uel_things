@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "GSG",
+    "SXS",
+    "FMF"
+  ],
+  "key": {
+    "G": { "item": "appliedenergistics2:quartz_vibrant_glass"},
+    "X": { "item": "appliedenergistics2:material", "data": 57 },
+    "S": { "item": "appliedenergistics2:material", "data": 45 },
+    "F": { "item": "appliedenergistics2:fluix_block" },
+    "M": { "item": "appliedenergistics2:material", "data": 47 }
+  },
+  "result": {
+    "item": "ae2uelthings:disk_cell_fluid_64k",
+    "count": 1
+  }
+}

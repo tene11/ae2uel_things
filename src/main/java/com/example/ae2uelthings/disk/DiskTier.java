@@ -1,4 +1,4 @@
-package com.example.modid.disk;
+package com.example.ae2uelthings.disk;
 
 /**
  * DISK (Deep Item Storage disK) セルの4段階の容量ティアを定義する。
@@ -14,6 +14,11 @@ package com.example.modid.disk;
  * 変更できない。したがって「1 item = 1 byte」を厳密に実現するには、AE2UELの実際の
  * unitsPerByte値をIDE上で確認し、必要であれば独自 IStorageChannel の実装を検討すること。
  * ここでは "getBytes() = 格納したいアイテム数" という前提でひとまず実装している。</p>
+ *
+ * 修正メモ: 以前ここに DiskStorageManager をstaticネストクラスとして同居させていたが、
+ * 他クラスから参照する際の修飾漏れ(コンパイルエラーの原因になった)を避けるため、
+ * com.example.ae2uelthings.disk.storage.DiskStorageManager として独立させた。
+ * DiskTierはあくまで容量ティアの定義のみを担当する。
  */
 public enum DiskTier {
 

@@ -6,6 +6,15 @@ import net.darkhax.curseforgegradle.TaskPublishCurseForge
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.gradle.ext.Gradle
 
+buildscript {
+    ext.kotlin_version = '2.4.10'
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
 plugins {
     id 'java'
     id 'java-library'
@@ -19,6 +28,7 @@ plugins {
 }
 
 apply from: 'gradle/scripts/helpers.gradle'
+apply plugin: 'kotlin'
 
 // Early Assertions
 assertProperty 'mod_version'
@@ -118,6 +128,7 @@ repositories {
         name 'CleanroomMC Maven'
         url 'https://maven.cleanroommc.com'
     }
+    mavenCentral()
 }
 
 dependencies {
@@ -156,6 +167,14 @@ dependencies {
         testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
+    testImplementation "org.jetbrains.kotlin:kotlin-test:$kotlin_version"
+
+    // ...既存の行はそのまま...
+
+    // AE2UEL (AE2 Unofficial Extended Life) 本体への依存
+    // curse.maven:<slug>-<projectId>:<fileId>
+    implementation rfg.deobf('curse.maven:ae2-extended-life-570458:6302098')
+
 }
 
 apply from: 'gradle/scripts/dependencies.gradle'

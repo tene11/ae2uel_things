@@ -1,6 +1,6 @@
 {
         "parent": "item/generated",
         "textures": {
-        "layer0": "modid:items/disk_cell_1k"
+                "layer0": "ae2uelthings:items/disk_cell_1k"
         }
-        }
+}

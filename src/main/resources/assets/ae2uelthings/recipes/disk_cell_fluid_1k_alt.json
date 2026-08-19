@@ -1,17 +1,9 @@
 {
-  "type": "minecraft:crafting_shaped",
-  "pattern": [
-    "GSG",
-    "SXS",
-    "FMF"
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    { "item": "ae2uelthings:disk_housing" },
+    { "item": "appliedenergistics2:material", "data": 54 }
   ],
-  "key": {
-    "G": { "item": "appliedenergistics2:quartz_vibrant_glass"},
-    "X": { "item": "appliedenergistics2:material", "data": 35 },
-    "S": { "item": "appliedenergistics2:material", "data": 45 },
-    "F": { "item": "appliedenergistics2:fluix_block" },
-    "M": { "item": "appliedenergistics2:material", "data": 47 }
-  },
   "result": {
     "item": "ae2uelthings:disk_cell_fluid_1k",
     "count": 1

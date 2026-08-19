@@ -10,12 +10,12 @@ import appeng.api.storage.ICellInventory;
 import appeng.api.storage.ICellInventoryHandler;
 import appeng.api.storage.ISaveProvider;
 import appeng.api.storage.IStorageChannel;
-import appeng.api.storage.channels.IFluidStorageChannel;
-import appeng.api.storage.data.IAEFluidStack;
+import appeng.api.storage.channels.IItemStorageChannel;
+import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IItemList;
 import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
-import com.example.ae2uelthings.disk.ItemDiskFluidCell;
+import com.example.ae2uelthings.disk.ItemDiskCell;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.items.IItemHandler;
@@ -23,19 +23,22 @@ import net.minecraftforge.items.IItemHandler;
 import java.util.UUID;
 
 /**
- * DISK(フルイド版)セル1個ぶんの、AE2ネットワークから見た「取引窓口」。
+ * DISKセル1個ぶんの、AE2ネットワークから見た「取引窓口」。
  *
- * 修正メモ: 旧実装は DiskFluidCellStorage.load(cellItem)/saveTo(cellItem) で
- * cellItemのNBTに直接読み書きしていた(=アイテム版で最初に問題視したNBT爆弾と
- * 同じパターン)。アイテム版のDiskCellInventoryHandlerと同じUUID外部化方式に揃え、
- * ItemStackのNBTにはUUID文字列(キー: "DiskUUID")だけを持たせる形に変更した。
- * ICellInventoryHandler<T>/ICellInventory<T>のメソッド一覧・実装方針(getCellInv()はthisを返す等)
- * は旧実装(実際にコンパイル・動作確認済み)のものをそのまま踏襲している。
+ * DiskFluidCellInventoryHandler(フルイド版、実際にコンパイル済みの実装)と同じく、
+ * ICellInventoryHandler<T> と ICellInventory<T> を同一クラスで実装し、getCellInv()は
+ * this を返す構成にしている。フルイド版と違うのは中身の永続化先で、こちらは
+ * ItemStackのNBTに直接書き込む代わりに、UUID文字列(キー: "DiskUUID")だけをNBTに持たせ、
+ * 実データは {@link DiskStorageManager} 側の {@link DiskCellStorage} に集約する。
+ * ME Drive/端末でのGUI表示時に発生するインベントリ同期パケットへ重いNBTが
+ * 乗るのを避けるのが目的 (本スレッドで確認したAE2Things本家の設計を踏襲)。
  *
- * getFuzzyMode/getConfigInventory/getUpgradesInventoryは、アイテム版と同じく
- * ItemDiskFluidCell(ICellWorkbenchItem実装済み)側の既存実装に委譲し、二重管理を避けている。
+ * getFuzzyMode/getConfigInventory/getUpgradesInventory は、フルイド版のように
+ * 固定値を返すのではなく、ItemDiskCell(IStorageCell実装済み)側の既存実装に
+ * 委譲している。ItemDiskCellはFuzzyModeをNBTに永続化する処理を既に持っているため、
+ * ここで別々の実装を持つと二重管理になってしまうため。
  */
-public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEFluidStack>, ICellInventory<IAEFluidStack> {
+public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemStack>, ICellInventory<IAEItemStack> {
 
     private static final String TAG_DISK_UUID = "DiskUUID";
 
@@ -45,9 +48,9 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     private final ISaveProvider container;
 
     /** UUID未採番(=まだ何も挿入されたことがない)の場合はnull */
-    private DiskFluidCellStorage storage;
+    private DiskCellStorage storage;
 
-    public DiskFluidCellInventoryHandler(ItemStack cellItem, long usableBytes, int bytesPerType, ISaveProvider container) {
+    public DiskCellInventoryHandler(ItemStack cellItem, long usableBytes, int bytesPerType, ISaveProvider container) {
         this.cellItem = cellItem;
         this.usableBytes = usableBytes;
         this.bytesPerType = bytesPerType;
@@ -59,22 +62,26 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     // UUID <-> ItemStack NBT / DiskStorageManager 連携
     // ------------------------------------------------------------------
 
-    private DiskFluidCellStorage loadExisting() {
+    private DiskCellStorage loadExisting() {
         NBTTagCompound tag = cellItem.getTagCompound();
         if (tag == null || !tag.hasKey(TAG_DISK_UUID)) {
             return null;
         }
         UUID uuid = UUID.fromString(tag.getString(TAG_DISK_UUID));
-        if (!DiskStorageManager.getCached().hasFluidDisk(uuid)) {
+        if (!DiskStorageManager.getCached().hasDisk(uuid)) {
+            // UUIDはItemStack側に記録されているのに、マネージャー側にデータが無い状態。
+            // DiskStorageEventHandlerが登録されておらずrefresh()が一度も走っていない、
+            // またはロード処理自体に問題がある可能性が高い。
             ExampleMod.LOGGER.warn(
-                    "[{}] 液体DISK UUID={} はセルに記録されているが、DiskStorageManagerに見つからない"
+                    "[{}] DISK UUID={} はセルに記録されているが、DiskStorageManagerに見つからない"
                             + " (空データとして扱う。DiskStorageEventHandlerがイベントバスに登録されているか確認すること)",
                     Tags.MOD_ID, uuid);
         }
-        return DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
+        return DiskStorageManager.getCached().getOrCreateDisk(uuid);
     }
 
-    private DiskFluidCellStorage getOrCreateStorage() {
+    /** 初回挿入時にだけUUIDを新規採番する。空のまま触っただけではUUIDを発行しない。 */
+    private DiskCellStorage getOrCreateStorage() {
         if (storage != null) {
             return storage;
         }
@@ -85,7 +92,7 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         }
         UUID uuid = UUID.randomUUID();
         tag.setString(TAG_DISK_UUID, uuid.toString());
-        storage = DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
+        storage = DiskStorageManager.getCached().getOrCreateDisk(uuid);
         return storage;
     }
 
@@ -98,15 +105,15 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     // ------------------------------------------------------------------
-    // ICellInventoryHandler<IAEFluidStack>
+    // ICellInventoryHandler<IAEItemStack>
     // ------------------------------------------------------------------
 
     @Override
-    public IAEFluidStack injectItems(IAEFluidStack input, Actionable mode, IActionSource src) {
+    public IAEItemStack injectItems(IAEItemStack input, Actionable mode, IActionSource src) {
         if (input == null || input.getStackSize() <= 0) return input;
 
-        IItemList<IAEFluidStack> fluidsList = storage != null ? storage.getFluids() : null;
-        IAEFluidStack existing = fluidsList != null ? fluidsList.findPrecise(input) : null;
+        IItemList<IAEItemStack> items = storage != null ? storage.getItems() : null;
+        IAEItemStack existing = items != null ? items.findPrecise(input) : null;
         long freeBytes = usableBytes - getStoredItemCount();
 
         if (existing != null) {
@@ -118,7 +125,7 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
                 markDirty();
             }
             if (toAccept >= input.getStackSize()) return null;
-            IAEFluidStack remainder = input.copy();
+            IAEItemStack remainder = input.copy();
             remainder.decStackSize(toAccept);
             return remainder;
         } else {
@@ -127,43 +134,50 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
             if (toAccept <= 0) return input;
 
             if (mode == Actionable.MODULATE) {
-                IAEFluidStack toStore = input.copy();
+                IAEItemStack toStore = input.copy();
                 toStore.setStackSize(toAccept);
-                getOrCreateStorage().getFluids().add(toStore);
+                getOrCreateStorage().getItems().add(toStore);
                 markDirty();
             }
             if (toAccept >= input.getStackSize()) return null;
-            IAEFluidStack remainder = input.copy();
+            IAEItemStack remainder = input.copy();
             remainder.decStackSize(toAccept);
             return remainder;
         }
     }
 
     @Override
-    public IAEFluidStack extractItems(IAEFluidStack request, Actionable mode, IActionSource src) {
+    public IAEItemStack extractItems(IAEItemStack request, Actionable mode, IActionSource src) {
         if (request == null || storage == null) return null;
-        IAEFluidStack existing = storage.getFluids().findPrecise(request);
+        IAEItemStack existing = storage.getItems().findPrecise(request);
         if (existing == null) return null;
 
         long size = Math.min(request.getStackSize(), existing.getStackSize());
         if (size <= 0) return null;
 
-        IAEFluidStack result = existing.copy();
+        IAEItemStack result = existing.copy();
         result.setStackSize(size);
 
         if (mode == Actionable.MODULATE) {
             existing.decStackSize(size);
-            // アイテム版と同じ理由でIItemList<IAEFluidStack>にもremove(T)は無い想定のため、
-            // 0個のエントリはそのまま残す(getAvailableItems/isEmpty/getStoredItemTypes側でフィルタ済み)。
+            // 要検証: IItemList<IAEItemStack> に remove(T) が無いため、0個のエントリは
+            // そのままリストに残す。getAvailableItems/isEmpty/getStoredItemTypes側で
+            // stackSize<=0のエントリを無視することで実害を防いでいる。
+            // 同じタイプを再度insertした際はfindPreciseでこの0エントリがそのまま
+            // 再利用されるため、通常のinsert/extract往復では肥大化しない。
+            // 完全に別タイプへ入れ替わり続けるような使い方だとリストが少しずつ
+            // 増える可能性があるため、IItemListに別名の削除メソッドが無いか
+            // (IntelliJで storage.getItems(). まで打ってCtrl+Spaceで補完候補を確認)
+            // 余裕があるときに確認すること。
             markDirty();
         }
         return result;
     }
 
     @Override
-    public IItemList<IAEFluidStack> getAvailableItems(IItemList<IAEFluidStack> out) {
+    public IItemList<IAEItemStack> getAvailableItems(IItemList<IAEItemStack> out) {
         if (storage != null) {
-            for (IAEFluidStack stack : storage.getFluids()) {
+            for (IAEItemStack stack : storage.getItems()) {
                 if (stack.getStackSize() > 0) {
                     out.add(stack);
                 }
@@ -173,8 +187,8 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     @Override
-    public IStorageChannel<IAEFluidStack> getChannel() {
-        return AEApi.instance().storage().getStorageChannel(IFluidStorageChannel.class);
+    public IStorageChannel<IAEItemStack> getChannel() {
+        return AEApi.instance().storage().getStorageChannel(IItemStorageChannel.class);
     }
 
     @Override
@@ -183,12 +197,12 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     @Override
-    public boolean isPrioritized(IAEFluidStack input) {
+    public boolean isPrioritized(IAEItemStack input) {
         return false;
     }
 
     @Override
-    public boolean canAccept(IAEFluidStack input) {
+    public boolean canAccept(IAEItemStack input) {
         return true;
     }
 
@@ -208,23 +222,26 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     @Override
-    public ICellInventory<IAEFluidStack> getCellInv() {
+    public ICellInventory<IAEItemStack> getCellInv() {
         return this;
     }
 
     // ------------------------------------------------------------------
-    // ICellInventory<IAEFluidStack>
+    // ICellInventory<IAEItemStack>
     // ------------------------------------------------------------------
 
     @Override
     public boolean isPreformatted() {
-        // ItemDiskFluidCellは現状タイプフィルター機能を持たない設計のため常にfalse
+        // ItemDiskCellは現状タイプフィルター機能を持たない設計
+        // (getConfigInventoryは常に0スロットの空インベントリを返す)ため、常にfalse。
+        // 将来フィルター機能を実装する場合は、getConfigInventory().getSlots() > 0 等で判定する。
         return false;
     }
 
     @Override
     public boolean isFuzzy() {
-        // アップグレードカード機構を持たないため常にfalse
+        // ItemDiskCellはアップグレードカード機構(getUpgradesInventory)を持たない設計
+        // (常に0スロット)のため、ファジーカードが刺さる余地がなく常にfalse。
         return false;
     }
 
@@ -240,22 +257,22 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     @Override
     public double getIdleDrain() {
-        return ((ItemDiskFluidCell) cellItem.getItem()).getIdleDrain();
+        return ((ItemDiskCell) cellItem.getItem()).getIdleDrain();
     }
 
     @Override
     public FuzzyMode getFuzzyMode() {
-        return ((ItemDiskFluidCell) cellItem.getItem()).getFuzzyMode(cellItem);
+        return ((ItemDiskCell) cellItem.getItem()).getFuzzyMode(cellItem);
     }
 
     @Override
     public IItemHandler getConfigInventory() {
-        return ((ItemDiskFluidCell) cellItem.getItem()).getConfigInventory(cellItem);
+        return ((ItemDiskCell) cellItem.getItem()).getConfigInventory(cellItem);
     }
 
     @Override
     public IItemHandler getUpgradesInventory() {
-        return ((ItemDiskFluidCell) cellItem.getItem()).getUpgradesInventory(cellItem);
+        return ((ItemDiskCell) cellItem.getItem()).getUpgradesInventory(cellItem);
     }
 
     @Override
@@ -327,15 +344,16 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
             return;
         }
         if (storage.isEmpty()) {
-            // 空になったらマネージャー側の参照とItemStack側のUUIDを両方消す
-            DiskStorageManager.getCached().removeFluidDisk(storage.getUUID());
+            // 空になったらマネージャー側の参照とItemStack側のUUIDを両方消し、
+            // 空レコードがマネージャー内に溜まり続けるのを防ぐ
+            DiskStorageManager.getCached().removeDisk(storage.getUUID());
             NBTTagCompound tag = cellItem.getTagCompound();
             if (tag != null) {
                 tag.removeTag(TAG_DISK_UUID);
             }
             storage = null;
         } else {
-            DiskStorageManager.getCached().updateFluidDisk(storage);
+            DiskStorageManager.getCached().updateDisk(storage);
         }
     }
 

@@ -1,5 +1,27 @@
-// You may write any gradle buildscript component in this file
-// This file is automatically applied after build.gradle + dependencies.gradle is ran
+// --- RetroFuturaGradle 2.0.3 x Gradle 9.7.0 implicit-dependency workaround ---
+// RFGが内部的に用意しているKotlin用コンパイルタスクに、対応するJava/Copy/カスタムタスクへの
+// 明示的な dependsOn が宣言されておらず、Gradle 9系の厳格化されたタスク検証
+// (implicit_dependency) でビルドが失敗する。
+//
+// tasks.configureEach + 文字列名での dependsOn を使うことで、
+// タスクの登録/生成タイミングに依存せず確実に依存関係を解決する。
+//
+// 参考: https://docs.gradle.org/9.7.0/userguide/validation_problems.html#implicit_dependency
+// RFG issue tracker: https://github.com/GTNewHorizons/RetroFuturaGradle/issues
+//
+// 今後 "Task ':X' uses this output of task ':Y' without declaring..." という
+// 同種のエラーが別のタスクペアで出た場合は、下の Map に1行追記すればよい。
+// (':X' = consumer側 = key, ':Y' = producer側 = value)
 
-// If you wish to use the default helper methods, uncomment the line below
-// apply from: 'gradle/scripts/helpers.gradle'
+def implicitDependencyFixes = [
+        'compileMcLauncherKotlin'  : 'createMcLauncherFiles',
+        'compilePatchedMcKotlin'   : 'decompressDecompiledSources',
+        'compileInjectedTagsKotlin': 'injectTags',
+]
+
+tasks.configureEach { t ->
+    def producer = implicitDependencyFixes[t.name]
+    if (producer != null) {
+        t.dependsOn producer
+    }
+}

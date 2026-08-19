@@ -42,6 +42,7 @@ if (propertyBool('publish_to_curseforge')) {
     if (!propertyBool('client_side') && !propertyBool('server_side')) {
         throw new GradleException('At least one of client_side and server_side must be true!')
     }
+
     tasks.named('curseforge') {
         apiToken = System.getenv('CURSEFORGE_TOKEN') == null ? "" : System.getenv('CURSEFORGE_TOKEN')
         debugMode = propertyBool('curseforge_debug')
@@ -63,6 +64,10 @@ if (propertyBool('publish_to_curseforge')) {
             mainFile.changelog = parserChangelog()
             mainFile.changelogType = 'markdown'
         }
+
+        // AE2 Unofficial Extended Life is a required dependency
+        mainFile.addRequirement 'ae2-extended-life'
+
         if (propertyBool('use_mixins')) {
             mainFile.addRequirement 'mixin-booter'
         }

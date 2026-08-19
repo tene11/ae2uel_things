@@ -1,7 +1,6 @@
-package com.example.modid.disk;
+package com.example.ae2uelthings.disk;
 
-import com.example.modid.Tags;
-import net.minecraft.creativetab.CreativeTabs;
+import com.example.ae2uelthings.Tags;
 import net.minecraft.item.Item;
 
 /**
@@ -19,6 +18,7 @@ public class ItemDiskHousing extends Item {
         setTranslationKey(Tags.MOD_ID + "." + ID);
         setRegistryName(ID);
         setMaxStackSize(1);
-        setCreativeTab(CreativeTabs.SEARCH);
+        // 専用クリエイティブタブに変更 (以前はCreativeTabs.SEARCHで検索しないと見つからなかった)
+        setCreativeTab(ModCreativeTab.INSTANCE);
     }
 }
