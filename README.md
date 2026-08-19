@@ -84,8 +84,7 @@ it follows the same idea as two existing mods:
 
 This is an independent reimplementation for the AE2-UEL rv6 API — no source
 code from either project is reused — but their architecture was reviewed
-during development to understand the general approach. See
-[NOTICE.md](NOTICE.md) for full attribution details.
+during development to understand the general approach.
 
 ## License
 
