@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    { "item": "ae2uelthings:disk_housing" },
+    { "item": "appliedenergistics2:material", "data": 35 }
+  ],
+  "result": {
+    "item": "ae2uelthings:disk_cell_1k",
+    "count": 1
+  }
+}
