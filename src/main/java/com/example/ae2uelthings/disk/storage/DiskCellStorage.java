@@ -10,25 +10,6 @@ import net.minecraft.nbt.NBTTagList;
 
 import java.util.UUID;
 
-/**
- * 1枚のDISKが実際に保持している中身(タイプ×個数のリスト)を表すデータホルダー。
- *
- * このクラス自体はItemStackやNBTの読み書きタイミングを一切知らない。
- * 「今メモリ上にどんなアイテムが何個入っているか」だけを保持し、
- * 永続化(いつ・どこに書くか)は {@link DiskStorageManager} 側の責務とする。
- *
- * 修正メモ: 当初 appeng.util.item.AEItemStack.loadItemStackFromNBT を使う予定だったが、
- * AE2UELには存在しなかった(コンパイルエラーで確認)。かわりに vanilla の
- * ItemStack#writeToNBT / new ItemStack(NBTTagCompound) だけで自前シリアライズしている。
- * ItemStackのCountフィールドはbyte(最大127)しかないため、実際の個数は
- * "Count"という別のlongフィールドに持たせ、ItemStack側のCountは常に1に固定している。
- *
- * 修正メモ2: getItemStack()という名前のメソッドは存在しなかった(IntelliJのStructure panelで確認)。
- * appeng.api.storage.data.IAEItemStack には代わりに getDefinition(): ItemStack があり、
- * これがアイテムの種類(Item+meta+NBT)だけを表す基準ItemStackを返す。個数は別途
- * こちらで管理している "Count" タグ側で持つので、getDefinition()の戻り値のCountは
- * copy()後にsetCount(1)で上書きして無視している。
- */
 public class DiskCellStorage {
 
     private static final String TAG_ITEMS = "Items";
@@ -53,10 +34,6 @@ public class DiskCellStorage {
         return items;
     }
 
-    /**
-     * 中身が空かどうか。IItemList自体は0個のエントリを残したまま保持することがあるため、
-     * リストが空かどうかではなく、stackSize>0のエントリが1つでもあるかで判定する。
-     */
     public boolean isEmpty() {
         if (items == null) {
             return true;
@@ -69,7 +46,6 @@ public class DiskCellStorage {
         return true;
     }
 
-    /** 格納されている全タイプの合計アイテム数 (1item=1byteモデルでの使用byte数と一致) */
     public long getStoredItemCount() {
         if (items == null) {
             return 0;
@@ -81,7 +57,6 @@ public class DiskCellStorage {
         return total;
     }
 
-    /** 格納されているタイプ数 (0個になったが未クリーンアップのエントリは数えない) */
     public int getStoredItemTypes() {
         if (items == null) {
             return 0;
@@ -100,7 +75,7 @@ public class DiskCellStorage {
     }
 
     // ------------------------------------------------------------------
-    // NBT (DiskStorageManager 側から呼ばれる)
+    // NBT (DiskStorageManager side)
     // ------------------------------------------------------------------
 
     public NBTTagCompound writeToNBT() {
@@ -114,7 +89,7 @@ public class DiskCellStorage {
                 NBTTagCompound entry = new NBTTagCompound();
 
                 ItemStack template = stack.getDefinition().copy();
-                template.setCount(1); // 実個数はCountタグ(long)側で持つ
+                template.setCount(1);
                 NBTTagCompound itemTag = new NBTTagCompound();
                 template.writeToNBT(itemTag);
 

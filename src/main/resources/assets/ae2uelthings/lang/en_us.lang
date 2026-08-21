@@ -21,7 +21,66 @@ item.ae2uelthings.disk_cell_fluid_4k.name=4k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_16k.name=16k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_64k.name=64k DISK Fluid Cell
 
-item.ae2uelthings.disk_cell_fluid.1k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
-item.ae2uelthings.disk_cell_fluid.4k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
-item.ae2uelthings.disk_cell_fluid.16k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
-item.ae2uelthings.disk_cell_fluid.64k.tooltip=Type-unlimited fluid storage. Usable capacity: %s mB
+item.ae2uelthings.disk_cell_fluid.1k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.4k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.16k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.64k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+
+# 拡張ティア (NAE2検出時のみ実際にアイテムが存在)
+item.ae2uelthings.disk_cell_256k.name=256k DISK Cell
+item.ae2uelthings.disk_cell_1024k.name=1024k DISK Cell
+item.ae2uelthings.disk_cell_4096k.name=4096k DISK Cell
+item.ae2uelthings.disk_cell_16384k.name=16384k DISK Cell
+
+item.ae2uelthings.disk_cell.256k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.1024k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.4096k.tooltip=Type-unlimited storage. Usable capacity: %s items
+item.ae2uelthings.disk_cell.16384k.tooltip=Type-unlimited storage. Usable capacity: %s items
+
+item.ae2uelthings.disk_cell_fluid_256k.name=256k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_1024k.name=1024k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_4096k.name=4096k DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid_16384k.name=16384k DISK Fluid Cell
+
+item.ae2uelthings.disk_cell_fluid.256k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.1024k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.4096k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+item.ae2uelthings.disk_cell_fluid.16384k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+
+
+item.ae2uelthings.disk_cell_max.name=Max DISK Cell
+item.ae2uelthings.disk_cell.max.tooltip=Type-unlimited storage. Usable capacity: %s items
+
+item.ae2uelthings.disk_cell_fluid_max.name=Max DISK Fluid Cell
+item.ae2uelthings.disk_cell_fluid.max.tooltip=Type-unlimited fluid storage. Usable capacity: %s
+
+
+# -- upgrade card --
+item.ae2uelthings.disk_cell.upgrades.supported_fuzzy_inverter=Supports: Fuzzy Card, Inverter Card
+item.ae2uelthings.disk_cell.upgrades.supported_inverter_only=Supports: Inverter Card
+item.ae2uelthings.disk_cell.upgrades.installed=Installed: %s
+item.ae2uelthings.disk_cell.upgrades.works_with_disk=Works with ae2uelthings DISK cells
+
+
+
+# --- CommandAe2uelThings ---
+command.ae2uelthings.help.recover=/ae2uelthings recover <uuid> [tier] - Spawns a new DISK holding the given UUID's data. tier: 1k/4k/16k/64k/256k/1024k/4096k/16384k/max (default: 64k).
+command.ae2uelthings.help.getuuid=/ae2uelthings getuuid - Shows the UUID of the DISK in your main hand.
+
+command.ae2uelthings.getuuid.not_disk=The item in your main hand is not a DISK with a UUID.
+command.ae2uelthings.getuuid.no_uuid=This DISK has not received a UUID yet (a UUID is only assigned the first time an item is inserted).
+command.ae2uelthings.getuuid.invalid_tag=The DiskUUID tag on this item is invalid: %s
+command.ae2uelthings.getuuid.prefix=UUID of this DISK:
+command.ae2uelthings.getuuid.hover=Click to put this UUID in your chat box (then Ctrl+A, Ctrl+C to copy)
+
+command.ae2uelthings.recover.usage=Usage: /ae2uelthings recover <uuid> [tier]
+command.ae2uelthings.recover.invalid_uuid=Invalid UUID format: %s
+command.ae2uelthings.recover.invalid_tier=Unknown tier "%s". Valid tiers: %s
+command.ae2uelthings.recover.tier_unavailable=Tier "%s" is not registered in this environment (requires NAE2 to be installed).
+command.ae2uelthings.recover.success.item=Recovered item DISK (tier: %s) with UUID %s for %s.
+command.ae2uelthings.recover.success.fluid=Recovered fluid DISK (tier: %s) with UUID %s for %s.
+command.ae2uelthings.recover.success.item.dropped=Recovered item DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
+command.ae2uelthings.recover.success.fluid.dropped=Recovered fluid DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
+command.ae2uelthings.recover.not_found=No data found for UUID %s.
+
+

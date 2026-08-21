@@ -80,8 +80,8 @@ dependencies {
     // Include OSXNarratorBlocker by default for the dev env, for M1+ Macs
     runtimeOnly 'com.cleanroommc:osxnarratorblocker:1.0'
 
-    // AE2UEL (AE2 Unofficial Extended Life) 本体
-    implementation rfg.deobf('curse.maven:ae2-extended-life-570458:5411078')
+    // AE2UEL(v0.56.7)
+    //implementation rfg.deobf('curse.maven:ae2-extended-life-570458:5411078')
 
     // ...(既存のコメント部分はそのまま)
     // Include StripLatestForgeRequirements by default for the dev env, saves everyone a hassle
@@ -89,8 +89,9 @@ dependencies {
     // Include OSXNarratorBlocker by default for the dev env, for M1+ Macs
     runtimeOnly 'com.cleanroommc:osxnarratorblocker:1.0'
 
-    // AE2UEL
-    implementation rfg.deobf('curse.maven:ae2-extended-life-570458:6302098')
+    // AE2UEL(v0.56.6)
+    implementation rfg.deobf('curse.maven:ae2-extended-life-570458:5411078')
+
 
     // JEI(4.16.1.1013)
     implementation rfg.deobf('curse.maven:jei-238222:5846804')
@@ -101,10 +102,14 @@ dependencies {
     // ============================================================
     // 以下はテスト用。
     // ============================================================
-    // runtimeOnly rfg.deobf('curse.maven:codechicken-lib-1-8-242818:2779848')
-    // runtimeOnly rfg.deobf('curse.maven:gregtech-ce-unofficial-557242:5519022')
-    // runtimeOnly rfg.deobf('curse.maven:nae2-884359:5380800')
-    // runtimeOnly rfg.deobf('curse.maven:crazyae-1111042:6840104')
+    //runtimeOnly rfg.deobf('curse.maven:codechicken-lib-1-8-242818:2779848')
+    //runtimeOnly rfg.deobf('curse.maven:gregtech-ce-unofficial-557242:5519022')
+    runtimeOnly rfg.deobf('curse.maven:nae2-884359:5380800')
+    runtimeOnly rfg.deobf('curse.maven:mekanism-ce-unofficial-840735:8640677')
+    runtimeOnly rfg.deobf('curse.maven:mekanism-energistics-1027681:5775101')
+    //runtimeOnly rfg.deobf('curse.maven:crazyae-1111042:6840104')
+    //runtimeOnly rfg.deobf('curse.maven:shadowfacts-forgelin-248453:2727070')
+
 
 }
 

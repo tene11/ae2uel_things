@@ -1,0 +1,86 @@
+# DISK (Deep Item Storage disK) Cells
+
+itemGroup.ae2uelthings=AE2 UEL Things
+
+item.ae2uelthings.disk_cell_1k.name=1k DISKセル
+item.ae2uelthings.disk_cell_4k.name=4k DISKセル
+item.ae2uelthings.disk_cell_16k.name=16k DISKセル
+item.ae2uelthings.disk_cell_64k.name=64k DISKセル
+
+item.ae2uelthings.disk_cell.1k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.4k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.16k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.64k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+
+item.ae2uelthings.disk_cell.used_bytes=使用済み: %s / %s バイト
+
+item.ae2uelthings.disk_housing.name=空のDISKセル筐体
+
+item.ae2uelthings.disk_cell_fluid_1k.name=1k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_4k.name=4k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_16k.name=16k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_64k.name=64k 液体DISKセル
+
+item.ae2uelthings.disk_cell_fluid.1k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.4k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.16k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.64k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+
+# 拡張ティア (NAE2検出時のみ実際にアイテムが存在)
+item.ae2uelthings.disk_cell_256k.name=256k DISKセル
+item.ae2uelthings.disk_cell_1024k.name=1024k DISKセル
+item.ae2uelthings.disk_cell_4096k.name=4096k DISKセル
+item.ae2uelthings.disk_cell_16384k.name=16384k DISKセル
+
+item.ae2uelthings.disk_cell.256k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.1024k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.4096k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+item.ae2uelthings.disk_cell.16384k.tooltip=種類無制限のストレージ。使用可能容量: %s個
+
+item.ae2uelthings.disk_cell_fluid_256k.name=256k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_1024k.name=1024k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_4096k.name=4096k 液体DISKセル
+item.ae2uelthings.disk_cell_fluid_16384k.name=16384k 液体DISKセル
+
+item.ae2uelthings.disk_cell_fluid.256k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.1024k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.4096k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+item.ae2uelthings.disk_cell_fluid.16384k.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+
+
+item.ae2uelthings.disk_cell_max.name=21億DISKセル
+item.ae2uelthings.disk_cell.max.tooltip=種類無制限のストレージ。使用可能容量: %s個
+
+item.ae2uelthings.disk_cell_fluid_max.name=21億DISK液体セル
+item.ae2uelthings.disk_cell_fluid.max.tooltip=種類無制限の液体ストレージ。使用可能容量: %s
+
+
+# -- upgrade card --
+item.ae2uelthings.disk_cell.upgrades.supported_fuzzy_inverter=Fuzzy Card, Inverter Card 対応
+item.ae2uelthings.disk_cell.upgrades.supported_inverter_only=Inverter Card 対応
+item.ae2uelthings.disk_cell.upgrades.installed=装着中: %s
+item.ae2uelthings.disk_cell.upgrades.works_with_disk=ae2uelthingsのDISKセルで使用可能
+
+# --- CommandAe2uelThings ---
+# 修正メモ: 以前はここに旧版(tier引数非対応)の訳が別途重複して残っていたため削除し、
+# 新版(tier対応済み)のみに整理した。
+command.ae2uelthings.help.recover=/ae2uelthings recover <uuid> [tier] - 指定UUIDのデータを保持する新しいDISKセルを生成します。tier: 1k/4k/16k/64k/256k/1024k/4096k/16384k/max(省略時は64k)。
+command.ae2uelthings.help.getuuid=/ae2uelthings getuuid - 手に持っているDISKセルのUUIDを表示します。
+
+command.ae2uelthings.getuuid.not_disk=メインハンドのアイテムはUUIDを持つDISKセルではありません。
+command.ae2uelthings.getuuid.no_uuid=このDISKセルはまだUUIDが採番されていません(アイテムを最初に挿入した時点で初めて発行されます)。
+command.ae2uelthings.getuuid.invalid_tag=このアイテムのDiskUUIDタグが不正です: %s
+command.ae2uelthings.getuuid.prefix=このDISKセルのUUID:
+command.ae2uelthings.getuuid.hover=クリックでチャット欄にUUIDを入力(Ctrl+A、Ctrl+Cでコピーできます)
+
+command.ae2uelthings.recover.usage=使い方: /ae2uelthings recover <uuid> [tier]
+command.ae2uelthings.recover.invalid_uuid=不正なUUID形式です: %s
+command.ae2uelthings.recover.invalid_tier=不明なtierです「%s」。使用可能なtier: %s
+command.ae2uelthings.recover.tier_unavailable=tier「%s」はこの環境では登録されていません(NAE2の導入が必要です)。
+command.ae2uelthings.recover.success.item=UUID %2$s のアイテムDISK(tier: %1$s)セルを %3$s へ復旧しました。
+command.ae2uelthings.recover.success.fluid=UUID %2$s の液体DISK(tier: %1$s)セルを %3$s へ復旧しました。
+command.ae2uelthings.recover.success.item.dropped=UUID %2$s のアイテムDISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
+command.ae2uelthings.recover.success.fluid.dropped=UUID %2$s の液体DISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
+command.ae2uelthings.recover.not_found=UUID %s のデータは見つかりませんでした。
+
+

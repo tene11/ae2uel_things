@@ -6,6 +6,8 @@ import appeng.api.storage.ICellWorkbenchItem;
 import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IFluidStorageChannel;
 import com.example.ae2uelthings.Tags;
+import com.example.ae2uelthings.api.DiskCapacityFormat;
+import com.example.ae2uelthings.api.IDiskFluidCellDefinition;
 import com.example.ae2uelthings.disk.storage.DiskFluidCellInventoryHandler;
 import net.minecraft.client.util.ITooltipFlag;
 import net.minecraft.entity.player.EntityPlayer;
@@ -20,19 +22,11 @@ import net.minecraft.world.World;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import net.minecraftforge.items.IItemHandler;
-import net.minecraftforge.items.ItemStackHandler;
 
 import java.util.List;
 
-/**
- * DISKセルの液体版。ItemDiskCellと同じ設計方針(ICellWorkbenchItemのみ実装し、
- * 独自DiskFluidCellHandler経由でBasicCellHandlerの63タイプ/63フルード上限を回避)。
- *
- * 容量モデルは「1mB=1byte」のシンプル版を採用(AE2標準の1byte=8000mBは不採用)。
- * そのためtier.getUsableBytes()の数値がそのままmB上限になる
- * (例: 1kティア = 1000mB = バケツ1個分。要望に応じて後から倍率を導入可能)。
- */
-public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
+
+public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem, IDiskFluidCellDefinition {
 
     private static final int MAX_TYPES = Integer.MAX_VALUE;
     private static final int BYTES_PER_TYPE = 1;
@@ -44,17 +38,19 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
         setTranslationKey(Tags.MOD_ID + ".disk_cell_fluid_" + tier.getSuffix());
         setRegistryName("disk_cell_fluid_" + tier.getSuffix());
         setMaxStackSize(1);
-        setCreativeTab(ModCreativeTab.INSTANCE); // 専用クリエイティブタブに変更
+        setCreativeTab(ModCreativeTab.INSTANCE);
     }
 
     public DiskTier getTier() {
         return tier;
     }
 
+    @Override
     public int getBytes(ItemStack cellItem) {
         return tier.getUsableBytes();
     }
 
+    @Override
     public int getBytesPerType(ItemStack cellItem) {
         return BYTES_PER_TYPE;
     }
@@ -63,10 +59,12 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
         return MAX_TYPES;
     }
 
-    public double getIdleDrain() {
+    @Override
+    public double getIdleDrain(ItemStack cellItem) {
         return 1.0D + tier.ordinal();
     }
 
+    @Override
     public IStorageChannel<?> getChannel() {
         return AEApi.instance().storage().getStorageChannel(IFluidStorageChannel.class);
     }
@@ -77,17 +75,20 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
 
     @Override
     public boolean isEditable(ItemStack itemStack) {
-        return false;
+        // タイプフィルター(config)をセルワークベンチで編集できるようにする(item版と同じ)
+        return true;
     }
 
     @Override
     public IItemHandler getUpgradesInventory(ItemStack itemStack) {
-        return new ItemStackHandler(0);
+        // Inverter Cardのみ1枠(参考元のfluid版DISKと同じ構成。FuzzyはFluidでは非対応)
+        return DiskUpgrades.createInventory(itemStack, false);
     }
 
     @Override
     public IItemHandler getConfigInventory(ItemStack itemStack) {
-        return new ItemStackHandler(0);
+        // タイプフィルター本体(item版と共通のDiskConfigを流用)
+        return DiskConfig.createInventory(itemStack);
     }
 
     @Override
@@ -119,9 +120,11 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
     @SideOnly(Side.CLIENT)
     public void addInformation(ItemStack stack, World world, List<String> tooltip, ITooltipFlag flag) {
         super.addInformation(stack, world, tooltip, flag);
+
+        long totalMb = (long) tier.getUsableBytes() * DiskFluidCellInventoryHandler.MB_PER_BYTE;
         tooltip.add(I18n.translateToLocalFormatted(
                 "item." + Tags.MOD_ID + ".disk_cell_fluid." + tier.getSuffix() + ".tooltip",
-                tier.getUsableBytes()));
+                DiskCapacityFormat.formatFluidMb(totalMb)));
 
         long usedBytes = getUsedBytesForTooltip(stack);
         if (usedBytes >= 0) {
@@ -129,6 +132,8 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
                     "item." + Tags.MOD_ID + ".disk_cell.used_bytes",
                     usedBytes, tier.getUsableBytes()));
         }
+
+        DiskUpgrades.appendTooltip(tooltip, getUpgradesInventory(stack), false);
     }
 
     private long getUsedBytesForTooltip(ItemStack stack) {
@@ -139,7 +144,7 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
                 return ((DiskFluidCellInventoryHandler) handlerObj).getUsedBytes();
             }
         } catch (Exception | LinkageError e) {
-            // 取得できない場合は表示をスキップ
+
         }
         return -1;
     }
@@ -150,9 +155,18 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
         if (playerIn.isSneaking() && !worldIn.isRemote) {
             if (isEmpty(stack)) {
                 ItemStack base = getDowngradeBaseStack();
+                // バグ修正: 以前はハウジングのみドロップし、対応するコンポーネント
+                // (appliedenergistics2:material 54〜57 / nae2:material 5〜8)を
+                // 一切返していなかった(アイテム版ItemDiskCellでは返しているのに非対称だった)。
+                // disk_cell_fluid_*.json のレシピと対になるよう、item版と同じ考え方で
+                // tier.getFluidComponentMeta()経由のコンポーネントを返す。
+                ItemStack component = createComponentStack(tier);
                 if (!base.isEmpty()) {
                     stack.shrink(1);
                     playerIn.entityDropItem(base, 0.25F);
+                    if (!component.isEmpty()) {
+                        playerIn.entityDropItem(component, 0.25F);
+                    }
                     return new ActionResult<>(EnumActionResult.SUCCESS, stack);
                 }
             }
@@ -173,13 +187,25 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem {
         return false;
     }
 
-    /**
-     * 分解時に返す土台アイテム。
-     * TODO 要ローカル検証: 現状はアイテム版と同じDISK_HOUSINGに戻すだけの簡易実装。
-     * コンポーネント(appliedenergistics2:material等)を伴う分解にしたい場合は、
-     * 液体用コンポーネントのmetaを別途調べて追加すること。
-     */
+
     private ItemStack getDowngradeBaseStack() {
         return new ItemStack(ModDiskItems.DISK_HOUSING);
+    }
+
+    /**
+     * 分解時に返すコンポーネントを作る(液体版)。tier.hasFluidComponent()がfalse
+     * (MAXティアなど対応レシピが無い場合)はItemStack.EMPTYを返す。
+     * アイテム版ItemDiskCell#createComponentStackと同じ考え方だが、meta値は
+     * tier.getFluidComponentMeta()(disk_cell_fluid_*.jsonのレシピに対応する値)を使う。
+     */
+    private static ItemStack createComponentStack(DiskTier tier) {
+        if (!tier.hasFluidComponent()) {
+            return ItemStack.EMPTY;
+        }
+        Item material = Item.getByNameOrId(tier.getComponentItemId());
+        if (material == null) {
+            return ItemStack.EMPTY;
+        }
+        return new ItemStack(material, 1, tier.getFluidComponentMeta());
     }
 }

@@ -10,21 +10,23 @@ import net.minecraftforge.fluids.FluidStack;
 
 import java.util.UUID;
 
-/**
- * 1枚の液体DISKが実際に保持している中身(フルイド種類×量のリスト)を表すデータホルダー。
- * {@link DiskCellStorage} のフルイド版で、役割・構造は完全に対応している。
- *
- * 旧実装(inline NBT版)との違い: 以前は cellItem.getTagCompound() に直接書き込んでいたが、
- * アイテム版と同じくUUID経由で {@link DiskStorageManager} 側に集約する方式に変更した。
- * 併せて、旧実装がフルイドの同一性を stack.getFluid().getName() (登録名のみ)で
- * 判定していた点も、IItemList#findPrecise によるAE2標準の判定(NBT差異も含む)に切り替えている。
- *
- * FluidStack#amount は int (vanilla Forgeの標準API)なので、アイテム版のItemStack#Countで
- * 問題になった byte 溢れの心配はない。
- */
 public class DiskFluidCellStorage {
 
     private static final String TAG_FLUIDS = "Fluids";
+
+    /**
+     * 修正: 実際の格納mB数(long)をここに保存する。
+     *
+     * バグ修正メモ(21億mB問題): FluidStack#writeToNBT()が書き込む"Amount"はint型のため、
+     * 以前はここに直接 stack.getStackSize() をint変換して渡していた。1byte=1000mBの
+     * 容量モデルでは、4096k/16384k/maxティアの実用容量がInteger.MAX_VALUE(約21億)mBを
+     * 容易に超える(16384kは容量の約13%、maxは約0.1%で到達)ため、それを超えて貯めた分が
+     * ワールド保存→再読み込みのたびに無条件で切り捨てられ、データが消失していた。
+     * 対策として、FluidStack本体のAmountタグ(int)には使わないダミー値(1)を入れて
+     * 実際の数量には関与させず、実数量はこの独自タグにlongでそのまま保存する。
+     * 読み込み時もこのタグを優先して使うため、int上限を超えても安全に保存・復元できる。
+     */
+    private static final String TAG_AMOUNT_MB = "AmountMb";
 
     private final UUID uuid;
     private IItemList<IAEFluidStack> fluids;
@@ -44,7 +46,6 @@ public class DiskFluidCellStorage {
         return fluids;
     }
 
-    /** stackSize>0のエントリが1つも無ければ空とみなす(0個エントリは残ることがあるため) */
     public boolean isEmpty() {
         if (fluids == null) {
             return true;
@@ -57,7 +58,7 @@ public class DiskFluidCellStorage {
         return true;
     }
 
-    /** 格納されている全種類の合計mB (1mB=1byteモデルでの使用byte数と一致) */
+
     public long getStoredItemCount() {
         if (fluids == null) {
             return 0;
@@ -69,7 +70,6 @@ public class DiskFluidCellStorage {
         return total;
     }
 
-    /** 格納されているフルイド種類数 */
     public int getStoredItemTypes() {
         if (fluids == null) {
             return 0;
@@ -87,22 +87,24 @@ public class DiskFluidCellStorage {
         return AEApi.instance().storage().getStorageChannel(IFluidStorageChannel.class);
     }
 
-    // ------------------------------------------------------------------
-    // NBT (DiskStorageManager 側から呼ばれる)
-    // ------------------------------------------------------------------
 
     public NBTTagCompound writeToNBT() {
         NBTTagCompound tag = new NBTTagCompound();
         NBTTagList list = new NBTTagList();
         if (fluids != null) {
             for (IAEFluidStack stack : fluids) {
-                if (stack.getStackSize() <= 0) {
+                long amount = stack.getStackSize();
+                if (amount <= 0) {
                     continue;
                 }
                 FluidStack fs = stack.getFluidStack().copy();
-                fs.amount = (int) Math.min(Integer.MAX_VALUE, stack.getStackSize());
+                // Amount(int)タグは実数量として使わないため、Fluid種別+NBTタグの保存だけに使う
+                // ダミー値を入れておく(0だと種別によっては無効値扱いされる恐れがあるため1)。
+                fs.amount = 1;
                 NBTTagCompound entry = new NBTTagCompound();
                 fs.writeToNBT(entry);
+                // 実際の数量はここにlongでそのまま保存(int上限の影響を受けない)
+                entry.setLong(TAG_AMOUNT_MB, amount);
                 list.appendTag(entry);
             }
         }
@@ -115,12 +117,21 @@ public class DiskFluidCellStorage {
         NBTTagList list = tag.getTagList(TAG_FLUIDS, 10); // 10 = NBTTagCompound
         IItemList<IAEFluidStack> fluids = getChannel().createList();
         for (int i = 0; i < list.tagCount(); i++) {
-            FluidStack fs = FluidStack.loadFluidStackFromNBT(list.getCompoundTagAt(i));
-            if (fs != null && fs.amount > 0) {
-                IAEFluidStack stack = getChannel().createStack(fs);
-                if (stack != null) {
-                    fluids.add(stack);
-                }
+            NBTTagCompound entry = list.getCompoundTagAt(i);
+            FluidStack fs = FluidStack.loadFluidStackFromNBT(entry);
+            if (fs == null) {
+                continue;
+            }
+            // 新形式(AmountMb)があればそれを優先。無ければ旧形式(int Amount、既に
+            // 切り詰められている可能性がある過去データ)にフォールバックする。
+            long amount = entry.hasKey(TAG_AMOUNT_MB) ? entry.getLong(TAG_AMOUNT_MB) : fs.amount;
+            if (amount <= 0) {
+                continue;
+            }
+            IAEFluidStack stack = getChannel().createStack(fs);
+            if (stack != null) {
+                stack.setStackSize(amount);
+                fluids.add(stack);
             }
         }
         storage.fluids = fluids;

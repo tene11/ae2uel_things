@@ -61,6 +61,8 @@ Empty cells can be disassembled:
 
 Should work alongside other AE2-UEL addons and any mod that interacts with AE2 through its standard storage-cell API. Not yet tested against other large-storage addons or profiled under heavy load — reports welcome via GitHub issues.
 
+- **[Neeve's AE2: Extended Life Additions (NAE2)](https://www.curseforge.com/minecraft/mc-mods/nae2)**: When installed alongside this addon, additional higher-tier DISK Cells become available beyond the base 1k/4k/16k/64k lineup.
+
 ## Development Notes
 
 Large parts of this addon's code (architecture drafts, boilerplate, refactors,
@@ -77,14 +79,18 @@ very welcome.
 ## Credits
 
 This addon's concept — type-unlimited storage cells for AE2 — is not original;
-it follows the same idea as two existing mods:
+it follows the same idea as existing mods in the AE2 ecosystem:
 
+- [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2) (LGPL-3.0) — the base mod this addon builds on
 - [AE2Things](https://github.com/ProjectET/AE2Things) (MIT)
 - [AE2MEGAThings](https://github.com/Lapis256/AE2MEGAThings) (LGPL-3.0)
 
 This is an independent reimplementation for the AE2-UEL rv6 API — no source
-code from either project is reused — but their architecture was reviewed
-during development to understand the general approach.
+code from any of these projects is copied or reused directly — but their code
+and textures were reviewed and used as a reference during development, both
+to understand the general architecture (cell handlers, storage components,
+recipe structure) and to keep this addon's items visually consistent with the
+wider AE2 ecosystem.
 
 ## License
 

@@ -6,14 +6,14 @@ import appeng.api.storage.ISaveProvider;
 import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IFluidStorageChannel;
 import appeng.api.storage.data.IAEStack;
-import com.example.ae2uelthings.disk.ItemDiskFluidCell;
+import com.example.ae2uelthings.api.IDiskFluidCellDefinition;
 import net.minecraft.item.ItemStack;
 
 public class DiskFluidCellHandler implements ICellHandler {
 
     @Override
     public boolean isCell(ItemStack is) {
-        return is != null && !is.isEmpty() && is.getItem() instanceof ItemDiskFluidCell;
+        return is != null && !is.isEmpty() && is.getItem() instanceof IDiskFluidCellDefinition;
     }
 
     @SuppressWarnings("unchecked")
@@ -24,13 +24,13 @@ public class DiskFluidCellHandler implements ICellHandler {
         if (!(channel instanceof IFluidStorageChannel)) {
             return null;
         }
-        ItemDiskFluidCell cell = (ItemDiskFluidCell) is.getItem();
+        IDiskFluidCellDefinition cell = (IDiskFluidCellDefinition) is.getItem();
         return (ICellInventoryHandler<T>) new DiskFluidCellInventoryHandler(
-                is, cell.getTier().getUsableBytes(), 1, container);
+                is, cell.getBytes(is), cell.getBytesPerType(is), container);
     }
 
     @Override
     public <T extends IAEStack<T>> double cellIdleDrain(ItemStack is, ICellInventoryHandler<T> handler) {
-        return ((ItemDiskFluidCell) is.getItem()).getIdleDrain();
+        return ((IDiskFluidCellDefinition) is.getItem()).getIdleDrain(is);
     }
 }
