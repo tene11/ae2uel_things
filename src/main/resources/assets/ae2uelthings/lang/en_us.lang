@@ -7,13 +7,6 @@ item.ae2uelthings.disk_cell_4k.name=4k DISK Cell
 item.ae2uelthings.disk_cell_16k.name=16k DISK Cell
 item.ae2uelthings.disk_cell_64k.name=64k DISK Cell
 
-item.ae2uelthings.disk_cell.1k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.4k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.16k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.64k.tooltip=Type-unlimited storage. Usable capacity: %s items
-
-item.ae2uelthings.disk_cell.used_bytes=Used: %s / %s bytes
-
 item.ae2uelthings.disk_housing.name=DISK Cell Housing
 
 item.ae2uelthings.disk_cell_fluid_1k.name=1k DISK Fluid Cell
@@ -21,45 +14,28 @@ item.ae2uelthings.disk_cell_fluid_4k.name=4k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_16k.name=16k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_64k.name=64k DISK Fluid Cell
 
-item.ae2uelthings.disk_cell_fluid.1k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.4k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.16k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.64k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-
 # 拡張ティア (NAE2検出時のみ実際にアイテムが存在)
 item.ae2uelthings.disk_cell_256k.name=256k DISK Cell
 item.ae2uelthings.disk_cell_1024k.name=1024k DISK Cell
 item.ae2uelthings.disk_cell_4096k.name=4096k DISK Cell
 item.ae2uelthings.disk_cell_16384k.name=16384k DISK Cell
 
-item.ae2uelthings.disk_cell.256k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.1024k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.4096k.tooltip=Type-unlimited storage. Usable capacity: %s items
-item.ae2uelthings.disk_cell.16384k.tooltip=Type-unlimited storage. Usable capacity: %s items
-
 item.ae2uelthings.disk_cell_fluid_256k.name=256k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_1024k.name=1024k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_4096k.name=4096k DISK Fluid Cell
 item.ae2uelthings.disk_cell_fluid_16384k.name=16384k DISK Fluid Cell
 
-item.ae2uelthings.disk_cell_fluid.256k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.1024k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.4096k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-item.ae2uelthings.disk_cell_fluid.16384k.tooltip=Type-unlimited fluid storage. Usable capacity: %s
-
 
 item.ae2uelthings.disk_cell_max.name=Max DISK Cell
-item.ae2uelthings.disk_cell.max.tooltip=Type-unlimited storage. Usable capacity: %s items
 
 item.ae2uelthings.disk_cell_fluid_max.name=Max DISK Fluid Cell
-item.ae2uelthings.disk_cell_fluid.max.tooltip=Type-unlimited fluid storage. Usable capacity: %s
 
 
 # -- upgrade card --
-item.ae2uelthings.disk_cell.upgrades.supported_fuzzy_inverter=Supports: Fuzzy Card, Inverter Card
-item.ae2uelthings.disk_cell.upgrades.supported_inverter_only=Supports: Inverter Card
 item.ae2uelthings.disk_cell.upgrades.installed=Installed: %s
-item.ae2uelthings.disk_cell.upgrades.works_with_disk=Works with ae2uelthings DISK cells
+item.ae2uelthings.disk_cell.upgrades.works_with_disk=DISK Cells
+item.ae2uelthings.disk_cell.upgrades.works_with_disk_fluid=Fluid DISK Cells
+item.ae2uelthings.disk_cell.unlimited_types=Unlimited
 
 
 

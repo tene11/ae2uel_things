@@ -6,11 +6,6 @@ package com.example.ae2uelthings.disk;
  * <p>容量モデル: 「アイテム1個 = 1byte」を採用しているため、{@link #getUsableBytes()}
  * はそのままそのティアが格納できる最大アイテム数(全タイプ合算)を表す。</p>
  *
- * <p><b>要ローカル検証:</b> AE2 rv6 の {@code IItemStorageChannel#getUnitsPerByte()} は
- * デフォルトでは 8(=1byteで8アイテム)であり、これはチャンネル側の固定値でセル側からは
- * 変更できない。したがって「1 item = 1 byte」を厳密に実現するには、AE2UELの実際の
- * unitsPerByte値をIDE上で確認し、必要であれば独自 IStorageChannel の実装を検討すること。
- * ここでは "getBytes() = 格納したいアイテム数" という前提でひとまず実装している。</p>
  *
  * 修正メモ: 以前ここに DiskStorageManager をstaticネストクラスとして同居させていたが、
  * 他クラスから参照する際の修飾漏れ(コンパイルエラーの原因になった)を避けるため、
@@ -39,17 +34,17 @@ package com.example.ae2uelthings.disk;
 public enum DiskTier {
 
     // suffix, totalBytes, componentMeta(アイテム版), fluidComponentMeta(液体版)
-    TIER_1K("1k", 1_024, 35, 54),
-    TIER_4K("4k", 4_096, 36, 55),
-    TIER_16K("16k", 16_384, 37, 56),
-    TIER_64K("64k", 65_536, 38, 57),
+    TIER_1K("1k", 1_000, 35, 54),
+    TIER_4K("4k", 4_000, 36, 55),
+    TIER_16K("16k", 16_000, 37, 56),
+    TIER_64K("64k", 64_000, 38, 57),
 
     // ---- 拡張ティア(NAE2検出時のみ登録。componentは appliedenergistics2:material ではなく
     //      nae2:material 側(disk_cell_*_alt.jsonのレシピと一致させる)) ----
-    TIER_256K("256k", 262_144, 1, 5, true),
-    TIER_1024K("1024k", 1_048_576, 2, 6, true),
-    TIER_4096K("4096k", 4_194_304, 3, 7, true),
-    TIER_16384K("16384k", 16_777_216, 4, 8, true),
+    TIER_256K("256k", 256_000, 1, 5, true),
+    TIER_1024K("1024k", 1_024_000, 2, 6, true),
+    TIER_4096K("4096k", 4_096_000, 3, 7, true),
+    TIER_16384K("16384k", 16_384_000, 4, 8, true),
 
     // ---- 理論上の最大ティア(特定MODの検出とは無関係に常に登録。CrazyAEのint上限対応を参考にした) ----
     TIER_MAX("max", Integer.MAX_VALUE, -1, -1);

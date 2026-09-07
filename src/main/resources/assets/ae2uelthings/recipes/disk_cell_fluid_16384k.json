@@ -1,4 +1,10 @@
 {
+  "conditions": [
+    {
+      "type": "forge:mod_loaded",
+      "modid": "nae2"
+    }
+  ],
   "type": "minecraft:crafting_shaped",
   "pattern": [
     "GSG",
@@ -6,11 +12,24 @@
     "FMF"
   ],
   "key": {
-    "G": { "item": "appliedenergistics2:quartz_vibrant_glass"},
-    "X": { "item": "nae2:material", "data": 8 },
-    "S": { "item": "appliedenergistics2:material","data": 45 },
-    "F": { "item": "appliedenergistics2:fluix_block" },
-    "M": {"item": "appliedenergistics2:material","data": 47 }
+    "G": {
+      "item": "appliedenergistics2:quartz_vibrant_glass"
+    },
+    "X": {
+      "item": "nae2:material",
+      "data": 8
+    },
+    "S": {
+      "item": "appliedenergistics2:material",
+      "data": 45
+    },
+    "F": {
+      "item": "appliedenergistics2:fluix_block"
+    },
+    "M": {
+      "item": "appliedenergistics2:material",
+      "data": 47
+    }
   },
   "result": {
     "item": "ae2uelthings:disk_cell_fluid_16384k",

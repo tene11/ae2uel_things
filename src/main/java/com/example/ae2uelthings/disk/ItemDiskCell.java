@@ -5,10 +5,8 @@ import appeng.api.config.FuzzyMode;
 import appeng.api.storage.ICellWorkbenchItem;
 import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IItemStorageChannel;
-import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
 import com.example.ae2uelthings.api.IDiskCellDefinition;
-import com.example.ae2uelthings.api.DiskCapacityFormat;
 import com.example.ae2uelthings.disk.storage.DiskCellInventoryHandler;
 import net.minecraft.client.util.ITooltipFlag;
 import net.minecraft.entity.player.EntityPlayer;
@@ -18,11 +16,11 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.EnumActionResult;
 import net.minecraft.util.EnumHand;
-import net.minecraft.util.text.translation.I18n;
 import net.minecraft.world.World;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import net.minecraftforge.items.IItemHandler;
+import appeng.util.InventoryAdaptor;
 
 import java.util.List;
 
@@ -123,34 +121,14 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
     @SideOnly(Side.CLIENT)
     public void addInformation(ItemStack stack, World world, List<String> tooltip, ITooltipFlag flag) {
         super.addInformation(stack, world, tooltip, flag);
-        tooltip.add(I18n.translateToLocalFormatted(
-                "item." + Tags.MOD_ID + ".disk_cell." + tier.getSuffix() + ".tooltip",
-                DiskCapacityFormat.format(tier.getUsableBytes())));
 
-        long usedBytes = getUsedBytesForTooltip(stack);
-        if (usedBytes >= 0) {
-            tooltip.add(I18n.translateToLocalFormatted(
-                    "item." + Tags.MOD_ID + ".disk_cell.used_bytes",
-                    usedBytes, tier.getUsableBytes()));
-        }
+        // "X of Y Bytes Used" / "X of Y Types" / (Partitioned時)Fuzzy等の行は、
+        // AE2本体のストレージセルと全く同じ文言・並びになるよう、AE2本体が
+        // 自分のセル用に使っているのと同じAPIをそのまま呼び出す(DiskUpgrades参照。
+        // DISKセルは種類無制限のため、タイプ数の行だけ「無制限」表記に差し替えている)。
+        DiskUpgrades.appendCellInformation(stack, tooltip, getChannel());
 
-        DiskUpgrades.appendTooltip(tooltip, getUpgradesInventory(stack), true);
-    }
-
-    private long getUsedBytesForTooltip(ItemStack stack) {
-        try {
-            Object handlerObj = AEApi.instance().registries().cell()
-                    .getCellInventory(stack, null, getChannel());
-            if (handlerObj instanceof DiskCellInventoryHandler) {
-                return ((DiskCellInventoryHandler) handlerObj).getUsedBytes();
-            }
-            ExampleMod.LOGGER.warn(
-                    "[{}] getUsedBytesForTooltip: : {}",
-                    Tags.MOD_ID, handlerObj == null ? "null" : handlerObj.getClass().getName());
-        } catch (Exception | LinkageError e) {
-            ExampleMod.LOGGER.warn("[{}] getUsedBytesForTooltip: ", Tags.MOD_ID, e);
-        }
-        return -1;
+        DiskUpgrades.appendTooltip(tooltip, getUpgradesInventory(stack));
     }
 
     @Override
@@ -161,12 +139,21 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
                 ItemStack base = getDowngradeBaseStack();
                 ItemStack component = createComponentStack(tier);
                 if (!base.isEmpty()) {
-                    stack.shrink(1);
-                    playerIn.entityDropItem(base, 0.25F);
-                    if (!component.isEmpty()) {
-                        playerIn.entityDropItem(component, 0.25F);
+                    // 本家AE2のAbstractStorageCell#disassembleDriveと同様、
+                    // stack.shrink(1)で"count=0の同一オブジェクト"を手のスロットに
+                    // 残したままinventoryへの追加処理を行うと、InventoryAdaptorが
+                    // そのスロットを空きスロットとして誤検出して降格アイテムを
+                    // 挿入してしまい、直後にonItemRightClickの戻り値(古いstack参照)で
+                    // setHeldItemされた際にそのスロットが上書きされて消えてしまう。
+                    // これを防ぐため、まずスロットをItemStack.EMPTYで明示的に空にしてから
+                    // giveOrDropを行い、戻り値は処理後の最新の手のアイテムを再取得する。
+                    playerIn.setHeldItem(handIn, ItemStack.EMPTY);
+                    giveOrDrop(playerIn, base);
+                    giveOrDrop(playerIn, component);
+                    if (playerIn.inventoryContainer != null) {
+                        playerIn.inventoryContainer.detectAndSendChanges();
                     }
-                    return new ActionResult<>(EnumActionResult.SUCCESS, stack);
+                    return new ActionResult<>(EnumActionResult.SUCCESS, playerIn.getHeldItem(handIn));
                 }
             }
         }
@@ -187,6 +174,24 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
         return false;
     }
 
+
+    /**
+     * インベントリへの追加を試み、入りきらなかった分だけその場にドロップする。
+     * AE2本家のAbstractStorageCell#disassembleDriveと同じパターン
+     * (InventoryAdaptor#addItemsで追加を試み、残りをplayer.dropItemでドロップ)に
+     * 揃えている。呼び出し元でplayer.inventoryContainer.detectAndSendChanges()を
+     * 呼び、サーバー側の変更を確実にクライアントへ同期させる点も本家と同様。
+     */
+    private static void giveOrDrop(EntityPlayer player, ItemStack stack) {
+        if (stack.isEmpty()) {
+            return;
+        }
+        InventoryAdaptor ia = InventoryAdaptor.getAdaptor(player);
+        ItemStack leftover = ia != null ? ia.addItems(stack) : stack;
+        if (!leftover.isEmpty()) {
+            player.dropItem(leftover, false);
+        }
+    }
 
     private ItemStack getDowngradeBaseStack() {
         return new ItemStack(ModDiskItems.DISK_HOUSING);

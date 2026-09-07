@@ -1,8 +1,19 @@
 {
+  "conditions": [
+    {
+      "type": "forge:mod_loaded",
+      "modid": "nae2"
+    }
+  ],
   "type": "minecraft:crafting_shapeless",
   "ingredients": [
-    { "item": "ae2uelthings:disk_housing" },
-    { "item": "nae2:material", "data": 8 }
+    {
+      "item": "ae2uelthings:disk_housing"
+    },
+    {
+      "item": "nae2:material",
+      "data": 8
+    }
   ],
   "result": {
     "item": "ae2uelthings:disk_cell_fluid_16384k",

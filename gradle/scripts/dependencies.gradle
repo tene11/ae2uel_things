@@ -104,9 +104,9 @@ dependencies {
     // ============================================================
     //runtimeOnly rfg.deobf('curse.maven:codechicken-lib-1-8-242818:2779848')
     //runtimeOnly rfg.deobf('curse.maven:gregtech-ce-unofficial-557242:5519022')
-    runtimeOnly rfg.deobf('curse.maven:nae2-884359:5380800')
+    //runtimeOnly rfg.deobf('curse.maven:nae2-884359:5380800')
     runtimeOnly rfg.deobf('curse.maven:mekanism-ce-unofficial-840735:8640677')
-    runtimeOnly rfg.deobf('curse.maven:mekanism-energistics-1027681:5775101')
+    //runtimeOnly rfg.deobf('curse.maven:mekanism-energistics-1027681:5775101')
     //runtimeOnly rfg.deobf('curse.maven:crazyae-1111042:6840104')
     //runtimeOnly rfg.deobf('curse.maven:shadowfacts-forgelin-248453:2727070')
 

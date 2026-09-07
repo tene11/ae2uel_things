@@ -1,6 +1,10 @@
 package com.example.ae2uelthings.disk;
 
 import appeng.api.AEApi;
+import appeng.api.storage.ICellInventory;
+import appeng.api.storage.ICellInventoryHandler;
+import appeng.api.storage.IStorageChannel;
+import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -148,22 +152,14 @@ public final class DiskUpgrades {
     }
 
     /**
-     * 対応カードの案内 + 現在装着中のカードをツールチップへ追加する。
+     * 現在装着中のカードをツールチップへ追加する(何も挿さっていなければ何も追加しない)。
      *
-     * 翻訳キーは assets/{modid}/lang/*.lang 側に以下を追加すること:
+     * 翻訳キーは assets/{modid}/lang/*.lang 側の以下を使う:
      * <pre>
-     * item.ae2uelthings.disk_cell.upgrades.supported_fuzzy_inverter=Supports: Fuzzy Card, Inverter Card
-     * item.ae2uelthings.disk_cell.upgrades.supported_inverter_only=Supports: Inverter Card
      * item.ae2uelthings.disk_cell.upgrades.installed=Installed: %s
      * </pre>
-     *
-     * @param allowFuzzy trueならFuzzy Card+Inverter Card対応の文言、falseならInverter Cardのみの文言
      */
-    public static void appendTooltip(List<String> tooltip, IItemHandler upgrades, boolean allowFuzzy) {
-        String supportedKey = "item." + Tags.MOD_ID + ".disk_cell.upgrades."
-                + (allowFuzzy ? "supported_fuzzy_inverter" : "supported_inverter_only");
-        tooltip.add(TextFormatting.DARK_GRAY + I18n.translateToLocal(supportedKey));
-
+    public static void appendTooltip(List<String> tooltip, IItemHandler upgrades) {
         if (upgrades == null) {
             return;
         }
@@ -178,6 +174,91 @@ public final class DiskUpgrades {
             tooltip.add(TextFormatting.DARK_GRAY + I18n.translateToLocalFormatted(
                     "item." + Tags.MOD_ID + ".disk_cell.upgrades.installed",
                     String.join(", ", installedNames)));
+        }
+    }
+
+    /**
+     * AE2本体のストレージセルと全く同じ書式("X of Y Bytes Used" / "X of Y Types" /
+     * Partitioned時はFuzzy・Preciseの行)でツールチップにセル情報を追加する
+     * (appeng.items.storage.AbstractStorageCell#addCheckedInformation参照。同じAPI
+     * {@code AEApi.instance().client().addCellInformation(...)} をそのまま使う)。
+     *
+     * <p>DISKセルは種類無制限(totalItemTypes == Integer.MAX_VALUE)なので、そのまま
+     * 呼び出すと"X of 2147483647 Types"のような不自然な表示になる。そのため
+     * バイト使用量・タイプ数の2行が追加された直後に2行目(タイプ数の行)だけを
+     * 特定し、「使用数 of 合計数」の部分を丸ごと「無制限」表記に差し替える
+     * (末尾の"Types"相当の単位語はAE2本体の翻訳をそのまま残すため、合計数の
+     * 直後から行末までを切り出して"無制限"に付け足す)。</p>
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static void appendCellInformation(ItemStack stack, List<String> tooltip, IStorageChannel<?> channel) {
+        try {
+            Object handlerObj = AEApi.instance().registries().cell().getCellInventory(stack, null, channel);
+            if (!(handlerObj instanceof ICellInventoryHandler)) {
+                if (handlerObj != null) {
+                    ExampleMod.LOGGER.warn(
+                            "[{}] appendCellInformation: unexpected handler type {}",
+                            Tags.MOD_ID, handlerObj.getClass().getName());
+                }
+                return;
+            }
+
+            ICellInventoryHandler handler = (ICellInventoryHandler) handlerObj;
+            ICellInventory cellInv = handler.getCellInv();
+
+            // AE2本体は必ず[バイト使用量, タイプ数, (preformatted時)Partitioned...]の順で追加する。
+            int typesLineIndex = tooltip.size() + 1;
+            AEApi.instance().client().addCellInformation(handler, tooltip);
+
+            // NAE2(Neeve's AE2: Extended Life Additions)の「Cell View」機能は、Mixinで
+            // appeng.core.api.ApiClientHelper#addCellInformation の末尾(RETURN時)に
+            // 直接割り込み、空行+「[キー]で中身を確認」のようなヒント行を無条件で追加する
+            // (co.neeve.nae2.mixin.jei.cellview.MixinApiClientHelper参照)。このMixinは
+            // ItemTooltipEventより前段の、このAPI呼び出し自体に直接割り込むため、
+            // ItemTooltipEvent側で後から取り除こうとしても間に合わない。ここで直接呼び出した
+            // 直後に取り除く必要がある。
+            //
+            // またこのヒントは appeng.api.implementations.items.IStorageCell を実装した
+            // アイテムしか対象にしないJEI連携と対になっており、それを実装していない
+            // ae2uelthings のDISKセルでは「[キー]を押しても中身は表示されない」という
+            // 実態のないヒントになってしまうため、そもそも表示しない。
+            stripNae2CellViewHint(tooltip);
+
+            if (cellInv != null && typesLineIndex < tooltip.size() && cellInv.getTotalItemTypes() >= Integer.MAX_VALUE) {
+                String original = tooltip.get(typesLineIndex);
+                String totalStr = String.valueOf(cellInv.getTotalItemTypes());
+                String unlimitedText = I18n.translateToLocal("item." + Tags.MOD_ID + ".disk_cell.unlimited_types");
+
+                int idx = original.indexOf(totalStr);
+                // "{使用数} {of} {合計数} {Types}" のうち、"{使用数} {of} {合計数}" を
+                // "無制限" に置き換え、末尾の" {Types}"(AE2本体の翻訳)はそのまま残す。
+                String rewritten = idx >= 0
+                        ? unlimitedText + original.substring(idx + totalStr.length())
+                        : unlimitedText;
+                tooltip.set(typesLineIndex, rewritten);
+            }
+        } catch (Exception | LinkageError e) {
+            ExampleMod.LOGGER.warn("[{}] appendCellInformation: ", Tags.MOD_ID, e);
+        }
+    }
+
+    /**
+     * NAE2の「Cell View」Mixinがappeng.core.api.ApiClientHelper#addCellInformationの
+     * 末尾に無条件で追加する「空行」+「ヒント行」の2行を取り除く。
+     *
+     * <p>NAE2側にこの2行だけを狙い撃ちできる判定APIは無いため、「末尾が空行で、かつ
+     * その直前にもう1行ある」という組み合わせ(AE2本体がこの位置に空行を単独で
+     * 追加することは無い)と、NAE2がロードされていることの2条件で判定する。
+     * 該当しなければ何もしない(誤って自前の行やAE2本体の行を消さないための保険)。</p>
+     */
+    private static void stripNae2CellViewHint(List<String> tooltip) {
+        if (!ModCompat.isNae2Loaded()) {
+            return;
+        }
+        int size = tooltip.size();
+        if (size >= 2 && tooltip.get(size - 2).isEmpty()) {
+            tooltip.remove(size - 1);
+            tooltip.remove(size - 2);
         }
     }
 }
