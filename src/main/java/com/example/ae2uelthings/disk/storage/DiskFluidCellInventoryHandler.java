@@ -14,40 +14,37 @@ import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IFluidStorageChannel;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IItemList;
+import appeng.util.prioritylist.IPartitionList;
 import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
 import com.example.ae2uelthings.api.IDiskFluidCellDefinition;
+import com.example.ae2uelthings.disk.DiskConfig;
+import com.example.ae2uelthings.disk.DiskUpgrades;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.items.IItemHandler;
-import com.example.ae2uelthings.disk.DiskConfig;
-import com.example.ae2uelthings.disk.DiskUpgrades;
-
-
 
 import java.util.UUID;
 
 /**
  * DISK(フルイド版)セル1個ぶんの、AE2ネットワークから見た「取引窓口」。
  *
- * 修正メモ1: 旧実装は DiskFluidCellStorage.load(cellItem)/saveTo(cellItem) で
- * cellItemのNBTに直接読み書きしていた(=アイテム版で最初に問題視したNBT爆弾と
- * 同じパターン)。アイテム版のDiskCellInventoryHandlerと同じUUID外部化方式に揃え、
- * ItemStackのNBTにはUUID文字列(キー: "DiskUUID")だけを持たせる形に変更した。
- * ICellInventoryHandler<T>/ICellInventory<T>のメソッド一覧・実装方針(getCellInv()はthisを返す等)
- * は旧実装(実際にコンパイル・動作確認済み)のものをそのまま踏襲している。
+ * アイテム版 {@link DiskCellInventoryHandler} と同じく、ItemStackのNBTにはUUID文字列
+ * (キー: "DiskUUID")とツールチップ用の要約値だけを持たせ、実データは
+ * {@link DiskStorageManager} 側の {@link DiskFluidCellStorage} に集約する。
+ * getFuzzyMode/getConfigInventory/getUpgradesInventory は ICellWorkbenchItem 経由、
+ * getIdleDrain は {@link IDiskFluidCellDefinition} 経由でセルアイテム側に委譲している。
  *
- * 修正メモ2(他アドオン向け拡張性): getFuzzyMode/getConfigInventory/getUpgradesInventoryは
- * appeng.api.storage.ICellWorkbenchItem 経由で、getIdleDrainは
- * {@link com.example.ae2uelthings.api.IDiskFluidCellDefinition} 経由でセルアイテム側に委譲する形に
- * した。特定クラス(ItemDiskFluidCell)への直接依存ではないため、他アドオンが同じ
- * インターフェースを実装した独自アイテムを作れば、そのまま動作する。
+ * <p><b>容量モデル:</b> AE2MEGAThingsに合わせて「1byte = 1000mB」。実データは生のmBで保持し、
+ * AE2ネットワークに公開する使用byte数だけを mB/1000(切り上げ)で換算する。
+ * 例: 1kティア(usableBytes=1000)の格納可能量は 1000 × 1000 = 1,000,000mB(バケツ1000個分)。
+ * 参考元に合わせ、タイプごとのbyte消費(bytesPerType)は持たない。</p>
  *
- * 修正メモ3(容量モデル変更): 以前は「1mB=1byte」のシンプルな1:1モデルだったが、
- * AE2MEGAThingsが採用している「1byte=1000mB」に合わせて変更した。
- * 実データ({@link DiskFluidCellStorage}側)は変わらず生のmBを保持したままで、
- * AE2ネットワークに公開する「使用byte数」の計算(このクラス内)だけがmB/1000を返す形になる。
- * 例: 1kティア(usableBytes=1000)の実際の格納可能量は 1000 × 1000 = 1,000,000mB(バケツ1000個分)。
+ * <p><b>タイプフィルター:</b> アイテム版と同じく、セル生成時にAE2UEL標準の
+ * PrecisePriorityList で構築し、既存タイプへの追加投入も含めて毎回適用する。
+ * フィルタースロットのアイテムはAE2UELの液体チャンネル(createStack)で液体に変換されるため、
+ * バケツ等の液体コンテナ・AE2のFluidDummyItemのどちらでも設定できる。
+ * 液体にはあいまい一致の対象が無いため、Fuzzy Cardには対応しない(参考元と同じ)。</p>
  */
 public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEFluidStack>, ICellInventory<IAEFluidStack> {
 
@@ -58,17 +55,25 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     private final ItemStack cellItem;
     private final long usableBytes;
-    private final int bytesPerType;
     private final ISaveProvider container;
+
+    /** タイプフィルター(空なら制限なし)。セル生成時に構築する。 */
+    private final IPartitionList<IAEFluidStack> partitionList;
+    /** Inverter Cardが挿さっていればBLACKLIST、それ以外はWHITELIST */
+    private final IncludeExclude partitionMode;
 
     /** UUID未採番(=まだ何も挿入されたことがない)の場合はnull */
     private DiskFluidCellStorage storage;
 
-    public DiskFluidCellInventoryHandler(ItemStack cellItem, long usableBytes, int bytesPerType, ISaveProvider container) {
+    public DiskFluidCellInventoryHandler(ItemStack cellItem, long usableBytes, ISaveProvider container) {
         this.cellItem = cellItem;
         this.usableBytes = usableBytes;
-        this.bytesPerType = bytesPerType;
         this.container = container;
+
+        IItemHandler upgrades = getUpgradesInventory();
+        this.partitionMode = DiskUpgrades.hasInverterCard(upgrades) ? IncludeExclude.BLACKLIST : IncludeExclude.WHITELIST;
+        this.partitionList = DiskConfig.createPartitionList(getConfigInventory(), getChannel(), false, getFuzzyMode());
+
         this.storage = loadExisting();
     }
 
@@ -88,7 +93,12 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
                             + " (空データとして扱う。DiskStorageEventHandlerがイベントバスに登録されているか確認すること)",
                     Tags.MOD_ID, uuid);
         }
-        return DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
+        DiskFluidCellStorage existing = DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
+        // 移行処理: 要約NBT("ic"=合計mB)が無い旧セルは、実データがあれば補う
+        if (!tag.hasKey(DiskCellInventoryHandler.TAG_ITEM_COUNT) && !existing.isEmpty()) {
+            DiskCellInventoryHandler.writeSummary(cellItem, existing.getStoredItemCount());
+        }
+        return existing;
     }
 
     private DiskFluidCellStorage getOrCreateStorage() {
@@ -107,11 +117,32 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     private void markDirty() {
+        // 修正メモ(保存漏れ対策): AE2UELのME Drive(TileDrive#saveChanges)はチャンクをdirtyに
+        // するだけでpersist()を呼ばず、persist()はドライブのスロットに次にアクセスした時
+        // (AppEngCellInventory)まで遅延される。バニラはワールド保存時にWorldSavedData
+        // (DiskStorageManager)をチャンクより先に書き出すため、persist()でしかmarkDirty()
+        // しないと、直前の変更がマネージャーの保存対象にならず取りこぼす恐れがあった。
+        // 実データ(DiskFluidCellStorage)はマネージャー内の同じインスタンスを直接書き換えているので、
+        // 変更の都度マネージャーをdirtyにしておけば、次の保存で確実に書き出される。
+        DiskStorageManager.getCached().markDirty();
         if (container != null) {
             container.saveChanges(this);
         } else {
             persist();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // タイプフィルター
+    // ------------------------------------------------------------------
+
+    /** タイプフィルターを通過するか(アイテム版と同じ判定)。フィルター未設定なら常にtrue。 */
+    private boolean passesFilter(IAEFluidStack input) {
+        if (partitionList.isEmpty()) {
+            return true;
+        }
+        boolean listed = partitionList.isListed(input);
+        return partitionMode == IncludeExclude.WHITELIST ? listed : !listed;
     }
 
     // ------------------------------------------------------------------
@@ -128,21 +159,9 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return usableBytes * (long) MB_PER_BYTE;
     }
 
-    /**
-     * 修正メモ: 以前はここが getStoredMb() のみで、格納済みタイプ数分の
-     * bytesPerTypeオーバーヘッド(mB換算)が一切反映されていなかった。injectItems()の
-     * 新規タイプ受け入れ判定では一時的に差し引いていたが、その場限りで永続化されておらず、
-     * 既存タイプへの追加投入で実質的にそのコストを取り戻せてしまうバグだった(アイテム版と同種)。
-     * getStoredItemTypes() * bytesPerType * MB_PER_BYTE を加えることで、実際に消費している
-     * mB数を正しく返すようにした。
-     */
-    private long getUsedMb() {
-        return getStoredMb() + getStoredItemTypes() * (long) bytesPerType * MB_PER_BYTE;
-    }
-
-    /** 残りmB容量 */
+    /** 残りmB容量(参考元と同じく、タイプごとの消費は無い) */
     private long getFreeMb() {
-        return Math.max(0, getTotalMb() - getUsedMb());
+        return Math.max(0, getTotalMb() - getStoredMb());
     }
 
     // ------------------------------------------------------------------
@@ -153,40 +172,17 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     public IAEFluidStack injectItems(IAEFluidStack input, Actionable mode, IActionSource src) {
         if (input == null || input.getStackSize() <= 0) return input;
 
-        IItemList<IAEFluidStack> fluidsList = storage != null ? storage.getFluids() : null;
-        IAEFluidStack existing = fluidsList != null ? fluidsList.findPrecise(input) : null;
-
-        // フィルター判定は「本当に初めて見るタイプ」(existing == null)のときだけ行う。
-        // 既存タイプ(0個に減っているだけの残留エントリを含む)への追加投入は、
-        // 後からフィルター設定を変更しても既存分には遡及しない(AE2標準セルと同じ仕様)。
-        if (existing == null && !isAcceptedByFilter(input.getFluidStack())) {
+        // 参考元と同じく、フィルターは既存タイプへの追加投入も含めて毎回適用する
+        if (!passesFilter(input)) {
             return input;
         }
 
-        // バグ修正: 以前は existing != null なら常に「既存タイプへの追加」として扱い、
-        // bytesPerType分の予約なしでfreeMbいっぱいまで受け入れていた。
-        // しかしextractItems()は0個になったエントリをリストから削除しない(意図的な仕様)ため、
-        // 「過去に全量抽出して0個のまま残っているタイプ」への再投入もfindPreciseに
-        // 引っかかり「既存」扱いになってしまい、bytesPerTypeの予約が漏れていた。
-        // このエントリは実際にはgetStoredItemTypes()でカウントされていない(0個は除外)ため、
-        // 再投入した瞬間にタイプ数が+1され、空き容量ギリギリまで投入すると
-        // 使用量がusableBytesをbytesPerType分(mB換算で最大1000mB=バケツ1個分)超えてしまっていた。
-        // existing.getStackSize() <= 0 の場合も「新規タイプ」と同じ扱いにして修正する。
-        boolean addsNewType = existing == null || existing.getStackSize() <= 0;
-
-        long freeMb = getFreeMb();
-        long acceptableMb = addsNewType ? freeMb - (long) bytesPerType * MB_PER_BYTE : freeMb;
-        long toAccept = Math.min(input.getStackSize(), Math.max(0, acceptableMb));
+        long toAccept = Math.min(input.getStackSize(), getFreeMb());
         if (toAccept <= 0) return input;
 
         if (mode == Actionable.MODULATE) {
-            if (existing != null) {
-                existing.incStackSize(toAccept);
-            } else {
-                IAEFluidStack toStore = input.copy();
-                toStore.setStackSize(toAccept);
-                getOrCreateStorage().getFluids().add(toStore);
-            }
+            // 個数・タイプ数のキャッシュを正しく保つため、必ずストレージ側のinsert()経由で増やす
+            getOrCreateStorage().insert(input, toAccept);
             markDirty();
         }
         if (toAccept >= input.getStackSize()) return null;
@@ -208,9 +204,10 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         result.setStackSize(size);
 
         if (mode == Actionable.MODULATE) {
-            existing.decStackSize(size);
-            // アイテム版と同じ理由でIItemList<IAEFluidStack>にもremove(T)は無い想定のため、
-            // 0個のエントリはそのまま残す(getAvailableItems/isEmpty/getStoredItemTypes側でフィルタ済み)。
+            // キャッシュを保つため、ストレージ側のextract()経由で減らす
+            storage.extract(existing, size);
+            // アイテム版と同じく、0個のエントリはここでは残し、次回の走査時に
+            // AE2UELのItemList側(MeaningfulItemIterator)が自動で取り除く。
             markDirty();
         }
         return result;
@@ -238,14 +235,18 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return AccessRestriction.READ_WRITE;
     }
 
+    /** アイテム版と同じく、WHITELISTかつフィルターに一致する液体はネットワーク投入時に優先させる。 */
     @Override
     public boolean isPrioritized(IAEFluidStack input) {
-        return false;
+        return partitionMode == IncludeExclude.WHITELIST
+                && !partitionList.isEmpty()
+                && partitionList.isListed(input);
     }
 
+    /** AE2UEL標準セルと同じく、フィルターを通らないものは受け入れ候補から外す。 */
     @Override
     public boolean canAccept(IAEFluidStack input) {
-        return true;
+        return passesFilter(input);
     }
 
     @Override
@@ -258,9 +259,16 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return 0;
     }
 
+    /**
+     * 以前は {@code pass == 1} のみを返していたが、AE2UELのソースで確認したところ、
+     * ME Drive(DriveWatcher)/ME Chest はこのハンドラを MEInventoryHandler で包んでおり、
+     * そちらの validForPass() は常に true を返す(内側へ委譲しない)ため、実害は無かった。
+     * AE2標準セル(MEPassThrough)と挙動を揃え、包まれずに直接使われた場合にも
+     * pass 2 (新規タイプの投入)で候補から外れないよう、両方のpassで有効とする。
+     */
     @Override
     public boolean validForPass(int pass) {
-        return pass == 1;
+        return true;
     }
 
     @Override
@@ -274,35 +282,18 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     @Override
     public boolean isPreformatted() {
-        // configに1つでもフィルターアイテム(流体コンテナ)が設定されていればtrue
-        return DiskConfig.hasAnyFilter(getConfigInventory());
-    }
-
-    /**
-     * 新規タイプの受け入れをタイプフィルターで判定する(item版DiskCellInventoryHandlerと同じ考え方)。
-     * 未設定(isPreformatted()==false)なら常にtrue(従来通り無制限)。
-     */
-    private boolean isAcceptedByFilter(net.minecraftforge.fluids.FluidStack candidate) {
-        if (!isPreformatted()) {
-            return true;
-        }
-        boolean matches = DiskConfig.matchesFluid(getConfigInventory(), candidate);
-        return getIncludeExcludeMode() == IncludeExclude.WHITELIST ? matches : !matches;
+        return !partitionList.isEmpty();
     }
 
     @Override
     public boolean isFuzzy() {
-        // fluid版DISKはFuzzy Card非対応(参考元と同じ。フルイドにはダメージ値のような
-        // "あいまい一致"対象が無いため、そもそもFuzzyスロット自体を持たない)
+        // 液体版DISKはFuzzy Card非対応(参考元と同じ)
         return false;
     }
 
     @Override
     public IncludeExclude getIncludeExcludeMode() {
-        // Inverter Cardが挿さっていればBLACKLISTへ反転(参考元と同じ仕様)。
-        // タイプフィルター(DiskConfig)を実装したことで、isAcceptedByFilter()経由で
-        // 実際にWHITELIST/BLACKLISTの挙動が反映されるようになっている。
-        return DiskUpgrades.hasInverterCard(getUpgradesInventory()) ? IncludeExclude.BLACKLIST : IncludeExclude.WHITELIST;
+        return partitionMode;
     }
 
     @Override
@@ -330,14 +321,16 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return ((ICellWorkbenchItem) cellItem.getItem()).getUpgradesInventory(cellItem);
     }
 
+    /** 参考元と同じく、タイプごとのbyte消費は無い。 */
     @Override
     public int getBytesPerType() {
-        return bytesPerType;
+        return 0;
     }
 
+    /** byte換算は切り上げのため、mB単位で空きがあるかで判定する(端数mBでも受け入れ可能なため)。 */
     @Override
     public boolean canHoldNewItem() {
-        return getFreeBytes() > bytesPerType;
+        return getFreeMb() > 0;
     }
 
     @Override
@@ -350,14 +343,10 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return Math.max(0, usableBytes - getUsedBytes());
     }
 
-    /**
-     * 修正メモ: 以前は getStoredItemCount() のみ(mB→byte換算後の量)を返しており、
-     * getStoredMb()と同じ理由でタイプ数コストが反映されていなかった。
-     * getStoredItemTypes() * bytesPerType (byte単位、mB換算不要)を加える。
-     */
+    /** 使用byte数 = 合計mBのbyte換算(タイプごとの消費なし)。 */
     @Override
     public long getUsedBytes() {
-        return getStoredItemCount() + getStoredItemTypes() * (long) bytesPerType;
+        return getStoredItemCount();
     }
 
     @Override
@@ -382,9 +371,10 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return storage == null ? 0 : storage.getStoredItemTypes();
     }
 
+    /** 新しいタイプは最低1mBを使うため、空きmBがそのまま追加可能なタイプ数の上限になる。 */
     @Override
     public long getRemainingItemTypes() {
-        return getFreeBytes() / Math.max(1, bytesPerType);
+        return getFreeMb();
     }
 
     @Override
@@ -397,11 +387,11 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return 0;
     }
 
+    /** 4=空、1=空きあり、3=満杯(タイプ数上限が無いため「タイプ満杯」の2は使わない)。 */
     @Override
     public int getStatusForCell() {
-        if (getUsedBytes() == 0) return 4;
+        if (getStoredMb() == 0) return 4;
         if (canHoldNewItem()) return 1;
-        if (getRemainingItemCount() > 0) return 2;
         return 3;
     }
 
@@ -417,9 +407,12 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
             if (tag != null) {
                 tag.removeTag(TAG_DISK_UUID);
             }
+            DiskCellInventoryHandler.clearSummary(cellItem);
             storage = null;
         } else {
             DiskStorageManager.getCached().updateFluidDisk(storage);
+            // ツールチップ用の要約値。合計量は生のmBのまま保存する(表示側でbyte換算)
+            DiskCellInventoryHandler.writeSummary(cellItem, storage.getStoredItemCount());
         }
     }
 

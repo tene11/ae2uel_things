@@ -27,10 +27,6 @@ import java.util.List;
 
 public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellDefinition {
 
-    private static final int MAX_TYPES = Integer.MAX_VALUE;
-
-    private static final int BYTES_PER_TYPE = 1;
-
     private final DiskTier tier;
 
     public ItemDiskCell(DiskTier tier) {
@@ -42,23 +38,9 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
         setCreativeTab(ModCreativeTab.INSTANCE);
     }
 
-    public DiskTier getTier() {
-        return tier;
-    }
-
-
     @Override
     public int getBytes(ItemStack cellItem) {
         return tier.getUsableBytes();
-    }
-
-    @Override
-    public int getBytesPerType(ItemStack cellItem) {
-        return BYTES_PER_TYPE;
-    }
-
-    public int getTotalTypes(ItemStack cellItem) {
-        return MAX_TYPES;
     }
 
     @Override
@@ -122,11 +104,10 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
     public void addInformation(ItemStack stack, World world, List<String> tooltip, ITooltipFlag flag) {
         super.addInformation(stack, world, tooltip, flag);
 
-        // "X of Y Bytes Used" / "X of Y Types" / (Partitioned時)Fuzzy等の行は、
-        // AE2本体のストレージセルと全く同じ文言・並びになるよう、AE2本体が
-        // 自分のセル用に使っているのと同じAPIをそのまま呼び出す(DiskUpgrades参照。
-        // DISKセルは種類無制限のため、タイプ数の行だけ「無制限」表記に差し替えている)。
-        DiskUpgrades.appendCellInformation(stack, tooltip, getChannel());
+        // 容量・フィルター情報はセル自身のNBTだけから組み立てる(サーバー側のデータには触れない)。
+        // UUIDは F3+H(詳細表示)のときだけ表示する。詳細は DiskUpgrades#appendCellInformation 参照。
+        DiskUpgrades.appendCellInformation(stack, tooltip, getBytes(stack), false,
+                getConfigInventory(stack), getUpgradesInventory(stack), flag.isAdvanced());
 
         DiskUpgrades.appendTooltip(tooltip, getUpgradesInventory(stack));
     }

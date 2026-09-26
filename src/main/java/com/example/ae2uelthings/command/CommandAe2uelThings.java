@@ -1,10 +1,13 @@
 package com.example.ae2uelthings.command;
 
-import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
 import com.example.ae2uelthings.disk.DiskTier;
 import com.example.ae2uelthings.disk.ModCompat;
 import com.example.ae2uelthings.disk.ModDiskItems;
+import com.example.ae2uelthings.disk.storage.DiskCellInventoryHandler;
+import com.example.ae2uelthings.disk.storage.DiskCellStorage;
+import com.example.ae2uelthings.disk.storage.DiskFluidCellInventoryHandler;
+import com.example.ae2uelthings.disk.storage.DiskFluidCellStorage;
 import com.example.ae2uelthings.disk.storage.DiskStorageManager;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
@@ -21,11 +24,9 @@ import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.event.ClickEvent;
 import net.minecraft.util.text.event.HoverEvent;
-import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -115,11 +116,9 @@ public class CommandAe2uelThings extends CommandBase {
             return getListOfStringsMatchingLastWord(args, "recover", "getuuid");
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("recover")) {
-            List<String> suffixes = new ArrayList<>();
-            for (DiskTier tier : DiskTier.values()) {
-                suffixes.add(tier.getSuffix());
-            }
-            return getListOfStringsMatchingLastWord(args, suffixes.toArray(new String[0]));
+            // 修正: 以前はNAE2未導入でも拡張ティア(256k〜16384k)まで補完候補に出ていた。
+            // この環境で実際に登録されているティアだけを候補にする。
+            return getListOfStringsMatchingLastWord(args, availableTierSuffixes().toArray(new String[0]));
         }
         return Collections.emptyList();
     }
@@ -208,6 +207,9 @@ public class CommandAe2uelThings extends CommandBase {
             NBTTagCompound nbt = new NBTTagCompound();
             nbt.setString(TAG_DISK_UUID, uuid.toString());
             stack.setTagCompound(nbt);
+            // 参考元(AE2Things)と同じく、ツールチップ用の要約値(合計個数)もNBTへ書き込む
+            DiskCellStorage disk = manager.getOrCreateDisk(uuid);
+            DiskCellInventoryHandler.writeSummary(stack, disk.getStoredItemCount());
             // バグ修正: addItemStackToInventoryの戻り値(bool)を見ていなかったため、
             // インベントリが満杯だとアイテムがどこにも生成されず消えるのに
             // 常に「復旧成功」の緑メッセージを返してしまっていた。戻り値がfalseの
@@ -222,6 +224,8 @@ public class CommandAe2uelThings extends CommandBase {
                             added ? "command.ae2uelthings.recover.success.item"
                                     : "command.ae2uelthings.recover.success.item.dropped",
                             tier.getSuffix(), uuid, player.getName()));
+            // 1アイテム = 1byte
+            warnIfOverCapacity(sender, tier, disk.getStoredItemCount());
             return;
         }
 
@@ -232,6 +236,8 @@ public class CommandAe2uelThings extends CommandBase {
             NBTTagCompound nbt = new NBTTagCompound();
             nbt.setString(TAG_DISK_UUID, uuid.toString());
             stack.setTagCompound(nbt);
+            DiskFluidCellStorage fluidDisk = manager.getOrCreateFluidDisk(uuid);
+            DiskCellInventoryHandler.writeSummary(stack, fluidDisk.getStoredItemCount());
             // バグ修正: item版と同じ理由で戻り値をチェックし、満杯なら足元にドロップする。
             boolean added = player.inventory.addItemStackToInventory(stack);
             if (!added) {
@@ -243,6 +249,10 @@ public class CommandAe2uelThings extends CommandBase {
                             added ? "command.ae2uelthings.recover.success.fluid"
                                     : "command.ae2uelthings.recover.success.fluid.dropped",
                             tier.getSuffix(), uuid, player.getName()));
+            // 1byte = 1000mB(切り上げ)。DiskFluidCellInventoryHandler#getStoredItemCountと同じ換算
+            long mb = fluidDisk.getStoredItemCount();
+            int mbPerByte = DiskFluidCellInventoryHandler.MB_PER_BYTE;
+            warnIfOverCapacity(sender, tier, mb <= 0 ? 0 : (mb + mbPerByte - 1) / mbPerByte);
             return;
         }
 
@@ -263,12 +273,34 @@ public class CommandAe2uelThings extends CommandBase {
             }
         }
 
-        StringBuilder validSuffixes = new StringBuilder();
+        // 不明なtierのときは、この環境で実際に使えるティアだけを案内する
+        throw new CommandException("command.ae2uelthings.recover.invalid_tier", input,
+                String.join(", ", availableTierSuffixes()));
+    }
+
+    /** この環境で登録されているティアの接尾辞一覧(NAE2未導入なら拡張ティアを除く)。 */
+    private static List<String> availableTierSuffixes() {
+        List<String> suffixes = new ArrayList<>();
         for (DiskTier tier : DiskTier.values()) {
-            if (validSuffixes.length() > 0) validSuffixes.append(", ");
-            validSuffixes.append(tier.getSuffix());
+            if (tier.isAvailable()) {
+                suffixes.add(tier.getSuffix());
+            }
         }
-        throw new CommandException("command.ae2uelthings.recover.invalid_tier", input, validSuffixes.toString());
+        return suffixes;
+    }
+
+    /**
+     * 復旧したデータがティアの容量を超えている場合に警告する(生成自体は行う)。
+     * 容量を超えたセルは「満杯」扱いになり新たに格納できないが、中身の取り出しは普通にできる。
+     * tier省略時(参考元どおり64k固定)でも同じ警告を出し、より大きいtierの指定を促す。
+     */
+    private void warnIfOverCapacity(ICommandSender sender, DiskTier tier, long usedBytes) {
+        long capacity = tier.getUsableBytes();
+        if (usedBytes > capacity) {
+            sendPrefixed(sender, TextFormatting.YELLOW,
+                    new TextComponentTranslation("command.ae2uelthings.recover.over_capacity",
+                            tier.getSuffix(), usedBytes, capacity));
+        }
     }
 
     /**

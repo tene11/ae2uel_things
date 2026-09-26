@@ -46,11 +46,8 @@ import java.util.List;
  * 全MODのConstructionが完了した後にまとめて発火することがFrogeのライフサイクルとして
  * 保証されているため、呼び出しタイミングを気にする必要がなくなる。
  *
- * 未対応の要TODO:
- * - 拡張ティア・TIER_MAXのテクスチャ/モデルjsonが未作成
- *   (現状は登録されるとmissing texture表示になる)。
- * - 拡張ティア・TIER_MAXのクラフトレシピが未定義(componentMetaが-1のため、
- *   通常レシピでは作れない)。
+ * 補足: TIER_MAXはクラフトレシピを持たない(componentMetaが-1)。
+ * クリエイティブタブや /give 等で入手する想定。
  */
 @Mod.EventBusSubscriber(modid = Tags.MOD_ID)
 public final class ModDiskItems {
@@ -143,8 +140,6 @@ public final class ModDiskItems {
 
     // モデルjsonは src/main/resources/assets/modid/models/item/disk_cell_XX.json に
     // 置いてあるだけでは表示されないため、ここで明示的にひも付ける。
-    // (拡張ティア・maxティアは現状テクスチャ/モデルjson未作成のため、登録された環境では
-    //  実際に登録はされるがmissing texture表示になる。要追加対応。)
     @SubscribeEvent
     @SideOnly(Side.CLIENT)
     public static void registerModels(ModelRegistryEvent event) {

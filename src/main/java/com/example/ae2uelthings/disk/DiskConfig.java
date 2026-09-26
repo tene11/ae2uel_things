@@ -1,9 +1,19 @@
 package com.example.ae2uelthings.disk;
 
+import appeng.api.AEApi;
+import appeng.api.config.FuzzyMode;
+import appeng.api.storage.IStorageChannel;
+import appeng.api.storage.channels.IFluidStorageChannel;
+import appeng.api.storage.data.IAEFluidStack;
+import appeng.api.storage.data.IAEStack;
+import appeng.api.storage.data.IItemList;
+import appeng.util.prioritylist.FuzzyPriorityList;
+import appeng.util.prioritylist.IPartitionList;
+import appeng.util.prioritylist.PrecisePriorityList;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraftforge.fluids.FluidStack;
-import net.minecraftforge.fluids.FluidUtil;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.items.IItemHandler;
 import net.minecraftforge.items.ItemStackHandler;
 
 /**
@@ -16,11 +26,10 @@ import net.minecraftforge.items.ItemStackHandler;
  * Forge標準の {@link ItemStackHandler} をセル本体のNBT(タグ名 "Config")へ永続化する形で
  * 自前実装する。</p>
  *
- * <p>これにより、DiskCellInventoryHandler側で「フィルターに設定されたタイプのみ
- * 新規タイプとして受け付ける/拒否する(Inverter Cardで反転)」という、参考元と同等の
- * タイプフィルター機構が実際に機能するようになる。フィルター判定はItem+metadataの
- * 一致のみを見る(NBTやスタックサイズは見ない)、AE2標準セルのタイプフィルターと
- * 同じ粒度。</p>
+ * <p>フィルターの判定そのものは {@link #createPartitionList} で、AE2UEL標準セル
+ * (BasicCellInventoryHandler)と同じ PrecisePriorityList / FuzzyPriorityList を構築して行う。
+ * そのため判定の粒度(Precise時はItem+meta+NBTの完全一致、Fuzzy時はFuzzyModeに従った
+ * あいまい一致)もAE2標準セルと同じになる。</p>
  *
  * <p><b>要ローカル検証:</b> スロット数({@link #CONFIG_SLOTS})はAE2 rv6標準セルの
  * タイプフィルターグリッド(9列×7行=63)を参考にした値。セルワークベンチのGUIで
@@ -57,8 +66,116 @@ public final class DiskConfig {
         return handler;
     }
 
+    /**
+     * 液体DISKセル用のタイプフィルターインベントリを作る。
+     *
+     * <p>修正メモ(液体フィルターをバケツで設定しても効かない件): 以前は液体DISKもアイテム版と
+     * 同じ {@link #createInventory} を使っており、置いたバケツ等がそのまま保存されていた。
+     * AE2UELの液体セルは {@code appeng.fluids.helper.FluidCellConfig} で、置かれた液体コンテナを
+     * その場で「液体ダミーアイテム」(FluidDummyItem、液体アイコンで表示される)に変換して保存している。
+     * これと同じ処理にして、フィルターには常に液体そのものが保存されるようにした。</p>
+     *
+     * <ul>
+     *   <li>バケツ等の液体コンテナ・液体ダミーアイテム → 中身の液体(1000mB)の液体ダミーアイテムに変換</li>
+     *   <li>液体を含まないアイテム → 受け付けない(スロットは変化しない。FluidCellConfigと同じ)</li>
+     *   <li>既に保存済みのバケツ(旧形式) → 読み込み時に液体ダミーアイテムへ変換して扱う</li>
+     * </ul>
+     *
+     * <p>変換には公開APIの {@code IAEFluidStack#asItemStackRepresentation()} を使う
+     * (AE2UEL内部ではFluidDummyItemを返す実装であることをソースで確認済み)。</p>
+     */
+    public static ItemStackHandler createFluidInventory(ItemStack cellItem) {
+        FluidConfigInventory handler = new FluidConfigInventory(cellItem);
+        NBTTagCompound tag = cellItem.getTagCompound();
+        if (tag != null && tag.hasKey(TAG_CONFIG)) {
+            handler.deserializeNBT(tag.getCompoundTag(TAG_CONFIG));
+            handler.convertLegacyEntries();
+        }
+        return handler;
+    }
+
+    /** 液体DISK用のフィルターインベントリ本体({@link #createFluidInventory} 参照)。 */
+    private static final class FluidConfigInventory extends ItemStackHandler {
+
+        private final ItemStack cellItem;
+
+        FluidConfigInventory(ItemStack cellItem) {
+            super(CONFIG_SLOTS);
+            this.cellItem = cellItem;
+        }
+
+        @Override
+        protected void onContentsChanged(int slot) {
+            NBTTagCompound tag = cellItem.hasTagCompound() ? cellItem.getTagCompound() : new NBTTagCompound();
+            tag.setTag(TAG_CONFIG, this.serializeNBT());
+            cellItem.setTagCompound(tag);
+        }
+
+        @Override
+        public void setStackInSlot(int slot, ItemStack stack) {
+            ItemStack converted = toFluidFilterStack(stack);
+            if (!stack.isEmpty() && converted.isEmpty()) {
+                // 液体を含まないアイテムは無視する(FluidCellConfig#setStackInSlotと同じ)
+                return;
+            }
+            super.setStackInSlot(slot, converted);
+        }
+
+        @Override
+        public ItemStack insertItem(int slot, ItemStack stack, boolean simulate) {
+            ItemStack converted = toFluidFilterStack(stack);
+            if (converted.isEmpty()) {
+                return stack;
+            }
+            ItemStack rest = super.insertItem(slot, converted, simulate);
+            return rest.isEmpty() ? ItemStack.EMPTY : stack;
+        }
+
+        @Override
+        public boolean isItemValid(int slot, ItemStack stack) {
+            return stack.isEmpty() || !toFluidFilterStack(stack).isEmpty();
+        }
+
+        /**
+         * 旧形式(バケツ等をそのまま保存していたデータ)を、読み込み直後に液体ダミーアイテムへ置き換える。
+         * NBTへは書き戻さない(次にフィルターを編集した時に新形式で保存される)ため、
+         * onContentsChangedを経由しないよう stacks を直接書き換える。
+         */
+        void convertLegacyEntries() {
+            for (int i = 0; i < stacks.size(); i++) {
+                ItemStack original = stacks.get(i);
+                if (!original.isEmpty()) {
+                    stacks.set(i, toFluidFilterStack(original));
+                }
+            }
+        }
+    }
+
+    /**
+     * 液体コンテナ/液体ダミーアイテムを、中身の液体(1000mB)を表す液体ダミーアイテムに変換する。
+     * 液体を含まない場合は {@link ItemStack#EMPTY}。
+     */
+    private static ItemStack toFluidFilterStack(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        IAEFluidStack fluid;
+        try {
+            // AE2UELの液体チャンネルは、FluidDummyItemとForgeの液体コンテナ(バケツ等)の両方を扱える
+            fluid = AEApi.instance().storage().getStorageChannel(IFluidStorageChannel.class).createStack(stack);
+        } catch (Exception e) {
+            return ItemStack.EMPTY;
+        }
+        if (fluid == null) {
+            return ItemStack.EMPTY;
+        }
+        fluid.setStackSize(Fluid.BUCKET_VOLUME);
+        ItemStack representation = fluid.asItemStackRepresentation();
+        return representation == null ? ItemStack.EMPTY : representation;
+    }
+
     /** configに1つでも(空でない)フィルターアイテムが設定されているか。 */
-    public static boolean hasAnyFilter(net.minecraftforge.items.IItemHandler config) {
+    public static boolean hasAnyFilter(IItemHandler config) {
         if (config == null) {
             return false;
         }
@@ -70,47 +187,34 @@ public final class DiskConfig {
         return false;
     }
 
-    /** candidateのItem+metadataが、config内のいずれかのフィルターと一致するか(NBT/個数は見ない)。 */
-    public static boolean matches(net.minecraftforge.items.IItemHandler config, ItemStack candidate) {
-        if (config == null || candidate == null || candidate.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < config.getSlots(); i++) {
-            ItemStack filterStack = config.getStackInSlot(i);
-            if (filterStack.isEmpty()) {
-                continue;
-            }
-            if (filterStack.getItem() == candidate.getItem() && filterStack.getMetadata() == candidate.getMetadata()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
-     * candidate(流体)が、config内のいずれかのフィルター(バケツ等の流体コンテナアイテム)と
-     * 一致するか。フィルタースロットのアイテムは {@link FluidUtil#getFluidContained} で
-     * 中身の流体を取り出して比較する(バケツ以外の流体コンテナアイテムでも動作する)。
+     * configの内容からタイプフィルター(パーティションリスト)を構築する。
      *
-     * 要ローカル検証: AE2 rv6のセルワークベンチが、fluidチャンネルのgetConfigInventory()を
-     * どのスロットUIで描画するか(バケツドラッグ&ドロップに対応しているか)をIDE上/実機で
-     * 必ず確認すること。対応していない場合、プレイヤーがフィルターへ流体を設定する手段が
-     * 無くなってしまう。
+     * <p>AE2UEL標準セルの BasicCellInventoryHandler のコンストラクタと同じ手順:
+     * config各スロットを {@code channel.createStack(is)} でAEスタックに変換してリストに集め、
+     * Fuzzy Cardがあれば {@link FuzzyPriorityList}、無ければ {@link PrecisePriorityList} で包む。
+     * 液体チャンネルの createStack は、バケツ等の液体コンテナとAE2のFluidDummyItemの
+     * どちらからでも液体を取り出せる(AE2UELソースで確認済み)。</p>
+     *
+     * <p>参考元(AE2Things)の DISKCellInventory#updateFilter と同じく、ハンドラ生成時に
+     * 1回だけ呼び、投入のたびには作り直さない。</p>
+     *
+     * @return フィルター未設定なら空のリスト({@code isEmpty() == true})
      */
-    public static boolean matchesFluid(net.minecraftforge.items.IItemHandler config, FluidStack candidate) {
-        if (config == null || candidate == null || candidate.getFluid() == null) {
-            return false;
-        }
-        for (int i = 0; i < config.getSlots(); i++) {
-            ItemStack filterStack = config.getStackInSlot(i);
-            if (filterStack.isEmpty()) {
-                continue;
+    public static <T extends IAEStack<T>> IPartitionList<T> createPartitionList(
+            IItemHandler config, IStorageChannel<T> channel, boolean fuzzy, FuzzyMode fuzzyMode) {
+        IItemList<T> list = channel.createList();
+        if (config != null) {
+            for (int i = 0; i < config.getSlots(); i++) {
+                ItemStack is = config.getStackInSlot(i);
+                if (!is.isEmpty()) {
+                    T stack = channel.createStack(is);
+                    if (stack != null) {
+                        list.add(stack);
+                    }
+                }
             }
-            FluidStack contained = FluidUtil.getFluidContained(filterStack);
-            if (contained != null && contained.getFluid() == candidate.getFluid()) {
-                return true;
-            }
         }
-        return false;
+        return fuzzy ? new FuzzyPriorityList<>(list, fuzzyMode) : new PrecisePriorityList<>(list);
     }
 }

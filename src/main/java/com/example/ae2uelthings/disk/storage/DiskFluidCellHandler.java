@@ -26,7 +26,7 @@ public class DiskFluidCellHandler implements ICellHandler {
         }
         IDiskFluidCellDefinition cell = (IDiskFluidCellDefinition) is.getItem();
         return (ICellInventoryHandler<T>) new DiskFluidCellInventoryHandler(
-                is, cell.getBytes(is), cell.getBytesPerType(is), container);
+                is, cell.getBytes(is), container);
     }
 
     @Override

@@ -10,6 +10,13 @@ import net.minecraftforge.fluids.FluidStack;
 
 import java.util.UUID;
 
+/**
+ * DISKセル1枚ぶんの実データ(液体版、数量は生のmB)。{@link DiskStorageManager} がUUIDをキーに保持する。
+ *
+ * <p>修正メモ(負荷対策): アイテム版 {@link DiskCellStorage} と同じく、合計量と格納タイプ数を
+ * キャッシュしてO(1)で返すようにした。中身の増減は必ず {@link #insert} / {@link #extract} 経由で
+ * 行うこと({@link #getFluids()} は読み取り専用)。</p>
+ */
 public class DiskFluidCellStorage {
 
     private static final String TAG_FLUIDS = "Fluids";
@@ -31,6 +38,11 @@ public class DiskFluidCellStorage {
     private final UUID uuid;
     private IItemList<IAEFluidStack> fluids;
 
+    /** 格納中の合計mB(キャッシュ) */
+    private long storedCount;
+    /** stackSize > 0 のエントリ数=格納タイプ数(キャッシュ) */
+    private int storedTypes;
+
     public DiskFluidCellStorage(UUID uuid) {
         this.uuid = uuid;
     }
@@ -39,6 +51,7 @@ public class DiskFluidCellStorage {
         return uuid;
     }
 
+    /** 読み取り専用。中身の増減には {@link #insert} / {@link #extract} を使うこと。 */
     public IItemList<IAEFluidStack> getFluids() {
         if (fluids == null) {
             fluids = getChannel().createList();
@@ -46,41 +59,66 @@ public class DiskFluidCellStorage {
         return fluids;
     }
 
-    public boolean isEmpty() {
-        if (fluids == null) {
-            return true;
+    /** 指定液体を amount mB 追加する(既存エントリがあれば加算、無ければ新規作成)。 */
+    public void insert(IAEFluidStack input, long amount) {
+        if (amount <= 0) {
+            return;
         }
-        for (IAEFluidStack stack : fluids) {
-            if (stack.getStackSize() > 0) {
-                return false;
+        IItemList<IAEFluidStack> list = getFluids();
+        IAEFluidStack existing = list.findPrecise(input);
+        if (existing != null) {
+            if (existing.getStackSize() <= 0) {
+                storedTypes++;
             }
+            existing.incStackSize(amount);
+        } else {
+            IAEFluidStack toStore = input.copy();
+            toStore.setStackSize(amount);
+            list.add(toStore);
+            storedTypes++;
         }
-        return true;
+        storedCount += amount;
     }
 
+    /** {@link #getFluids()} の findPrecise で取得した既存エントリから amount mB 減らす。 */
+    public void extract(IAEFluidStack existing, long amount) {
+        if (existing == null || amount <= 0) {
+            return;
+        }
+        long before = existing.getStackSize();
+        long removed = Math.min(amount, Math.max(0, before));
+        existing.decStackSize(removed);
+        storedCount -= removed;
+        if (before > 0 && existing.getStackSize() <= 0) {
+            storedTypes--;
+        }
+    }
+
+    public boolean isEmpty() {
+        return storedTypes <= 0;
+    }
 
     public long getStoredItemCount() {
-        if (fluids == null) {
-            return 0;
-        }
-        long total = 0;
-        for (IAEFluidStack stack : fluids) {
-            total += stack.getStackSize();
-        }
-        return total;
+        return storedCount;
     }
 
     public int getStoredItemTypes() {
+        return storedTypes;
+    }
+
+    /** キャッシュを実データから数え直す(NBT読み込み直後に使う)。 */
+    private void recalculate() {
+        storedCount = 0;
+        storedTypes = 0;
         if (fluids == null) {
-            return 0;
+            return;
         }
-        int count = 0;
         for (IAEFluidStack stack : fluids) {
             if (stack.getStackSize() > 0) {
-                count++;
+                storedCount += stack.getStackSize();
+                storedTypes++;
             }
         }
-        return count;
     }
 
     private static IFluidStorageChannel getChannel() {
@@ -135,6 +173,7 @@ public class DiskFluidCellStorage {
             }
         }
         storage.fluids = fluids;
+        storage.recalculate();
         return storage;
     }
 }

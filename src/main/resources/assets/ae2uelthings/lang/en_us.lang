@@ -36,6 +36,7 @@ item.ae2uelthings.disk_cell.upgrades.installed=Installed: %s
 item.ae2uelthings.disk_cell.upgrades.works_with_disk=DISK Cells
 item.ae2uelthings.disk_cell.upgrades.works_with_disk_fluid=Fluid DISK Cells
 item.ae2uelthings.disk_cell.unlimited_types=Unlimited
+item.ae2uelthings.disk_cell.uuid=Disk UUID: %s
 
 
 
@@ -58,5 +59,6 @@ command.ae2uelthings.recover.success.fluid=Recovered fluid DISK (tier: %s) with 
 command.ae2uelthings.recover.success.item.dropped=Recovered item DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
 command.ae2uelthings.recover.success.fluid.dropped=Recovered fluid DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
 command.ae2uelthings.recover.not_found=No data found for UUID %s.
+command.ae2uelthings.recover.over_capacity=Warning: the stored data (%2$s bytes) exceeds the capacity of the %1$s tier (%3$s bytes). The cell will be treated as full (items can still be extracted). Specify a larger tier if needed.
 
 

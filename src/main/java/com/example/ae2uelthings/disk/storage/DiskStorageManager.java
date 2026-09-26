@@ -54,7 +54,7 @@ public class DiskStorageManager extends WorldSavedData {
         ExampleMod.LOGGER.info(
                 "[{}] DiskStorageManager.refresh(): {} (disks={}, fluidDisks={})",
                 Tags.MOD_ID,
-                freshlyCreated ? " " : " ",
+                freshlyCreated ? "新規作成" : "既存データを読み込み",
                 instance.disks.size(),
                 instance.fluidDisks.size());
         return instance;
@@ -67,10 +67,6 @@ public class DiskStorageManager extends WorldSavedData {
 
     public DiskCellStorage getOrCreateDisk(UUID uuid) {
         return disks.computeIfAbsent(uuid, DiskCellStorage::new);
-    }
-
-    public DiskCellStorage getDisk(UUID uuid) {
-        return disks.get(uuid);
     }
 
     public boolean hasDisk(UUID uuid) {
@@ -91,10 +87,6 @@ public class DiskStorageManager extends WorldSavedData {
 
     public DiskFluidCellStorage getOrCreateFluidDisk(UUID uuid) {
         return fluidDisks.computeIfAbsent(uuid, DiskFluidCellStorage::new);
-    }
-
-    public DiskFluidCellStorage getFluidDisk(UUID uuid) {
-        return fluidDisks.get(uuid);
     }
 
     public boolean hasFluidDisk(UUID uuid) {

@@ -27,9 +27,6 @@ import java.util.List;
 
 public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem, IDiskFluidCellDefinition {
 
-    private static final int MAX_TYPES = Integer.MAX_VALUE;
-    private static final int BYTES_PER_TYPE = 1;
-
     private final DiskTier tier;
 
     public ItemDiskFluidCell(DiskTier tier) {
@@ -40,22 +37,9 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem, IDisk
         setCreativeTab(ModCreativeTab.INSTANCE);
     }
 
-    public DiskTier getTier() {
-        return tier;
-    }
-
     @Override
     public int getBytes(ItemStack cellItem) {
         return tier.getUsableBytes();
-    }
-
-    @Override
-    public int getBytesPerType(ItemStack cellItem) {
-        return BYTES_PER_TYPE;
-    }
-
-    public int getTotalTypes(ItemStack cellItem) {
-        return MAX_TYPES;
     }
 
     @Override
@@ -87,7 +71,7 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem, IDisk
     @Override
     public IItemHandler getConfigInventory(ItemStack itemStack) {
         // タイプフィルター本体(item版と共通のDiskConfigを流用)
-        return DiskConfig.createInventory(itemStack);
+        return DiskConfig.createFluidInventory(itemStack);
     }
 
     @Override
@@ -120,10 +104,10 @@ public class ItemDiskFluidCell extends Item implements ICellWorkbenchItem, IDisk
     public void addInformation(ItemStack stack, World world, List<String> tooltip, ITooltipFlag flag) {
         super.addInformation(stack, world, tooltip, flag);
 
-        // アイテム版(ItemDiskCell)と同じく、AE2本体のストレージセルと全く同じ文言・
-        // 並びになるよう、AE2本体のAPIをそのまま呼び出す(DiskUpgrades参照。DISKセルは
-        // 種類無制限のため、タイプ数の行だけ「無制限」表記に差し替えている)。
-        DiskUpgrades.appendCellInformation(stack, tooltip, getChannel());
+        // 容量・フィルター情報はセル自身のNBTだけから組み立てる(サーバー側のデータには触れない)。
+        // UUIDは F3+H(詳細表示)のときだけ表示する。詳細は DiskUpgrades#appendCellInformation 参照。
+        DiskUpgrades.appendCellInformation(stack, tooltip, getBytes(stack), true,
+                getConfigInventory(stack), getUpgradesInventory(stack), flag.isAdvanced());
 
         DiskUpgrades.appendTooltip(tooltip, getUpgradesInventory(stack));
     }

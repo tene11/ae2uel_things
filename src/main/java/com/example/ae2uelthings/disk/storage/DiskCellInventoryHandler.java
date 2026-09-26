@@ -17,53 +17,80 @@ import appeng.api.storage.channels.IItemStorageChannel;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IAEStack;
 import appeng.api.storage.data.IItemList;
+import appeng.util.prioritylist.FuzzyPriorityList;
+import appeng.util.prioritylist.IPartitionList;
 import com.example.ae2uelthings.ExampleMod;
 import com.example.ae2uelthings.Tags;
 import com.example.ae2uelthings.api.IDiskCellDefinition;
+import com.example.ae2uelthings.disk.DiskConfig;
+import com.example.ae2uelthings.disk.DiskUpgrades;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.items.IItemHandler;
-import com.example.ae2uelthings.disk.DiskConfig;
-import com.example.ae2uelthings.disk.DiskUpgrades;
 
 import java.util.UUID;
 
 /**
  * DISKセル1個ぶんの、AE2ネットワークから見た「取引窓口」。
  *
- * DiskFluidCellInventoryHandler(フルイド版、実際にコンパイル済みの実装)と同じく、
  * ICellInventoryHandler<T> と ICellInventory<T> を同一クラスで実装し、getCellInv()は
- * this を返す構成にしている。フルイド版と違うのは中身の永続化先で、こちらは
- * ItemStackのNBTに直接書き込む代わりに、UUID文字列(キー: "DiskUUID")だけをNBTに持たせ、
+ * this を返す構成にしている(液体版 {@link DiskFluidCellInventoryHandler} も同じ構成)。
+ * 中身はItemStackのNBTに直接書き込まず、UUID文字列(キー: "DiskUUID")だけをNBTに持たせ、
  * 実データは {@link DiskStorageManager} 側の {@link DiskCellStorage} に集約する。
  * ME Drive/端末でのGUI表示時に発生するインベントリ同期パケットへ重いNBTが
- * 乗るのを避けるのが目的 (本スレッドで確認したAE2Things本家の設計を踏襲)。
+ * 乗るのを避けるのが目的 (AE2Things本家の設計を踏襲)。
  *
- * getFuzzyMode/getConfigInventory/getUpgradesInventory は、フルイド版のように
- * 固定値を返すのではなく、appeng.api.storage.ICellWorkbenchItem 経由でセルアイテム側の
- * 既存実装に委譲している(ItemDiskCellはFuzzyModeをNBTに永続化する処理を既に持っている
- * ため、ここで別々の実装を持つと二重管理になる)。getIdleDrainは
- * {@link com.example.ae2uelthings.api.IDiskCellDefinition} 経由で委譲している。
+ * <p><b>容量モデル(参考元AE2Thingsに合わせた):</b> 1アイテム = 1byte。タイプごとの
+ * byte消費(bytesPerType)は持たず、空き容量は「総byte数 − 合計個数」だけで決まる
+ * (参考元 DISKCellInventory#getFreeBytes と同じ)。タイプ数は無制限。</p>
+ *
+ * <p><b>タイプフィルター(参考元に合わせた):</b> config/upgradesからセル生成時に1回だけ
+ * パーティションリストを構築する(参考元 DISKCellInventory#updateFilter と同じ)。
+ * 判定にはAE2UEL標準セル(BasicCellInventoryHandler)と同じ PrecisePriorityList /
+ * FuzzyPriorityList を使うため、Fuzzy Card挿入時はあいまい一致になる。
+ * フィルターは既存タイプへの追加投入も含めて毎回適用される(参考元と同じ)。
+ * WHITELISTでフィルターに一致するアイテムは {@link #isPrioritized} がtrueとなり、
+ * AE2標準の分割セルと同様にネットワーク投入時に優先される。</p>
+ *
+ * getFuzzyMode/getConfigInventory/getUpgradesInventory は
+ * appeng.api.storage.ICellWorkbenchItem 経由で、getIdleDrainは
+ * {@link com.example.ae2uelthings.api.IDiskCellDefinition} 経由でセルアイテム側に委譲している。
  * どちらも特定クラス(ItemDiskCell)への直接依存ではなくインターフェース経由なので、
  * 他アドオンが同じインターフェースを実装した独自アイテムを作れば、そのまま動作する。
  */
 public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemStack>, ICellInventory<IAEItemStack> {
 
-    private static final String TAG_DISK_UUID = "DiskUUID";
+    public static final String TAG_DISK_UUID = "DiskUUID";
+
+    /**
+     * ツールチップ表示用にセル自身のNBTへ書き込む要約値: 合計個数(液体版は合計mB)。
+     * 参考元(AE2Things)の DISKCellInventory.ITEM_COUNT_TAG ("ic") に相当。
+     * クライアントはサーバー側の {@link DiskStorageManager} を読めないため、この値だけで表示する。
+     */
+    public static final String TAG_ITEM_COUNT = "ic";
 
     private final ItemStack cellItem;
     private final long usableBytes;
-    private final int bytesPerType;
     private final ISaveProvider container;
+
+    /** タイプフィルター(空なら制限なし)。セル生成時に構築する。 */
+    private final IPartitionList<IAEItemStack> partitionList;
+    /** Inverter Cardが挿さっていればBLACKLIST、それ以外はWHITELIST */
+    private final IncludeExclude partitionMode;
 
     /** UUID未採番(=まだ何も挿入されたことがない)の場合はnull */
     private DiskCellStorage storage;
 
-    public DiskCellInventoryHandler(ItemStack cellItem, long usableBytes, int bytesPerType, ISaveProvider container) {
+    public DiskCellInventoryHandler(ItemStack cellItem, long usableBytes, ISaveProvider container) {
         this.cellItem = cellItem;
         this.usableBytes = usableBytes;
-        this.bytesPerType = bytesPerType;
         this.container = container;
+
+        IItemHandler upgrades = getUpgradesInventory();
+        this.partitionMode = DiskUpgrades.hasInverterCard(upgrades) ? IncludeExclude.BLACKLIST : IncludeExclude.WHITELIST;
+        this.partitionList = DiskConfig.createPartitionList(
+                getConfigInventory(), getChannel(), DiskUpgrades.hasFuzzyCard(upgrades), getFuzzyMode());
+
         this.storage = loadExisting();
     }
 
@@ -86,7 +113,38 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
                             + " (空データとして扱う。DiskStorageEventHandlerがイベントバスに登録されているか確認すること)",
                     Tags.MOD_ID, uuid);
         }
-        return DiskStorageManager.getCached().getOrCreateDisk(uuid);
+        DiskCellStorage existing = DiskStorageManager.getCached().getOrCreateDisk(uuid);
+        // 移行処理: 要約NBT導入前に作られたセルには "ic" が無いため、実データがあれば補う
+        // (クライアント側のダミーマネージャーでは中身が空なので書き込まれない)。
+        if (!tag.hasKey(TAG_ITEM_COUNT) && !existing.isEmpty()) {
+            writeSummary(cellItem, existing.getStoredItemCount());
+        }
+        return existing;
+    }
+
+    /** ツールチップ用の要約値(合計個数、液体版は合計mB)をセルのNBTへ書き込む。液体版・recoverコマンドからも使う。 */
+    public static void writeSummary(ItemStack cell, long count) {
+        NBTTagCompound tag = cell.getTagCompound();
+        if (tag == null) {
+            tag = new NBTTagCompound();
+            cell.setTagCompound(tag);
+        }
+        tag.setLong(TAG_ITEM_COUNT, count);
+    }
+
+    /**
+     * 要約値をセルのNBTから取り除く(中身が空になった時用)。UUIDを消した後に呼ぶこと。
+     * 結果としてNBTが空になった場合はタグ自体を外し、新品のセルと同じ状態に戻す。
+     */
+    public static void clearSummary(ItemStack cell) {
+        NBTTagCompound tag = cell.getTagCompound();
+        if (tag == null) {
+            return;
+        }
+        tag.removeTag(TAG_ITEM_COUNT);
+        if (tag.getKeySet().isEmpty()) {
+            cell.setTagCompound(null);
+        }
     }
 
     /** 初回挿入時にだけUUIDを新規採番する。空のまま触っただけではUUIDを発行しない。 */
@@ -106,11 +164,35 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     }
 
     private void markDirty() {
+        // 修正メモ(保存漏れ対策): AE2UELのME Drive(TileDrive#saveChanges)はチャンクをdirtyに
+        // するだけでpersist()を呼ばず、persist()はドライブのスロットに次にアクセスした時
+        // (AppEngCellInventory)まで遅延される。バニラはワールド保存時にWorldSavedData
+        // (DiskStorageManager)をチャンクより先に書き出すため、persist()でしかmarkDirty()
+        // しないと、直前の変更がマネージャーの保存対象にならず取りこぼす恐れがあった。
+        // 実データ(DiskCellStorage)はマネージャー内の同じインスタンスを直接書き換えているので、
+        // 変更の都度マネージャーをdirtyにしておけば、次の保存で確実に書き出される。
+        DiskStorageManager.getCached().markDirty();
         if (container != null) {
             container.saveChanges(this);
         } else {
             persist();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // タイプフィルター
+    // ------------------------------------------------------------------
+
+    /**
+     * タイプフィルターを通過するか(AE2UEL MEInventoryHandler#passesBlackOrWhitelist と同じ判定)。
+     * フィルター未設定なら常にtrue。WHITELISTは一致するもののみ、BLACKLISTは一致しないもののみ許可。
+     */
+    private boolean passesFilter(IAEItemStack input) {
+        if (partitionList.isEmpty()) {
+            return true;
+        }
+        boolean listed = partitionList.isListed(input);
+        return partitionMode == IncludeExclude.WHITELIST ? listed : !listed;
     }
 
     // ------------------------------------------------------------------
@@ -136,7 +218,13 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
      * (ただしItem/Fluid以外の独自チャンネルしか持たないセルには対応しない)。</p>
      */
     private static boolean isCellNestingPrevented(IAEItemStack input) {
-        ItemStack stack = input.getDefinition();
+        // 修正メモ(共有ItemStack破壊対策): 以前は input.getDefinition() をそのまま渡していた。
+        // getDefinition()はAE2が内部で共有しているItemStack(AESharedItemStackのキー)で、
+        // 読み取り専用で扱う必要がある。AE2標準セルのハンドラは初期化時に
+        // Platform.openNbtData()で空NBTを付与することがあり、共有Stackを直接渡すと
+        // キー(ハッシュ)が書き換わってAE2内部の登録が壊れる恐れがあった。
+        // AE2本体の同種チェックと同じく、createItemStack()で作ったコピーを使う。
+        ItemStack stack = input.createItemStack();
         if (stack == null || stack.isEmpty()) {
             return false;
         }
@@ -178,48 +266,24 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     public IAEItemStack injectItems(IAEItemStack input, Actionable mode, IActionSource src) {
         if (input == null || input.getStackSize() <= 0) return input;
 
+        // 参考元と同じく、フィルターは既存タイプへの追加投入も含めて毎回適用する
+        if (!passesFilter(input)) {
+            return input;
+        }
+
         if (isCellNestingPrevented(input)) {
             // 参考元(AE2 MEGA Things)と同じ仕様: 中身が空でないストレージセル
             // (通常のAE2セル・別のDISK等)はDISKの中には格納できない(容量バイパス対策)。
             return input;
         }
 
-        IItemList<IAEItemStack> items = storage != null ? storage.getItems() : null;
-        IAEItemStack existing = items != null ? items.findPrecise(input) : null;
-
-        // フィルター判定は「本当に初めて見るタイプ」(existing == null)のときだけ行う。
-        // 既存タイプ(0個に減っているだけの残留エントリを含む)への追加投入は、
-        // 後からフィルター設定を変更しても既存分には遡及しない(AE2標準セルと同じ仕様)。
-        if (existing == null && !isAcceptedByFilter(input.getDefinition())) {
-            return input;
-        }
-
-        // バグ修正(フルイド版と同種): existing != null なら常に「既存タイプへの追加」として
-        // 扱っていたが、extractItems()は0個になったエントリを削除しないため、
-        // 「過去に全量抽出して0個のまま残っているタイプ」への再投入もfindPreciseで
-        // 「既存」扱いになり、bytesPerTypeの予約が漏れていた(getStoredItemTypes()は
-        // 0個エントリを除外するため、再投入した瞬間にタイプ数が+1され、空き容量ギリギリまで
-        // 投入すると使用量がusableBytesをbytesPerType分超えてしまう)。
-        // アイテム版はBYTES_PER_TYPE=1のため実害は僅少だが、フルイド版と計算ロジックを
-        // 揃えるため同様に修正する。
-        boolean addsNewType = existing == null || existing.getStackSize() <= 0;
-
-        // 要検証: 以前は usableBytes - getStoredItemCount() だけで、既存タイプ分の
-        // bytesPerTypeオーバーヘッドがfreeBytesに反映されていなかった(getUsedBytes()と不整合)。
-        // getFreeBytes()経由に統一し、両者が常に同じ計算を使うようにした。
-        long freeBytes = getFreeBytes();
-        long acceptable = addsNewType ? freeBytes - bytesPerType : freeBytes;
-        long toAccept = Math.min(input.getStackSize(), Math.max(0, acceptable));
+        // 参考元と同じく、空き容量(総byte数 − 合計個数)の範囲で受け入れる
+        long toAccept = Math.min(input.getStackSize(), getFreeBytes());
         if (toAccept <= 0) return input;
 
         if (mode == Actionable.MODULATE) {
-            if (existing != null) {
-                existing.incStackSize(toAccept);
-            } else {
-                IAEItemStack toStore = input.copy();
-                toStore.setStackSize(toAccept);
-                getOrCreateStorage().getItems().add(toStore);
-            }
+            // 個数・タイプ数のキャッシュを正しく保つため、必ずストレージ側のinsert()経由で増やす
+            getOrCreateStorage().insert(input, toAccept);
             markDirty();
         }
         if (toAccept >= input.getStackSize()) return null;
@@ -241,16 +305,13 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         result.setStackSize(size);
 
         if (mode == Actionable.MODULATE) {
-            existing.decStackSize(size);
-            // 要検証: IItemList<IAEItemStack> に remove(T) が無いため、0個のエントリは
-            // そのままリストに残す。getAvailableItems/isEmpty/getStoredItemTypes側で
-            // stackSize<=0のエントリを無視することで実害を防いでいる。
-            // 同じタイプを再度insertした際はfindPreciseでこの0エントリがそのまま
-            // 再利用されるため、通常のinsert/extract往復では肥大化しない。
-            // 完全に別タイプへ入れ替わり続けるような使い方だとリストが少しずつ
-            // 増える可能性があるため、IItemListに別名の削除メソッドが無いか
-            // (IntelliJで storage.getItems(). まで打ってCtrl+Spaceで補完候補を確認)
-            // 余裕があるときに確認すること。
+            // キャッシュを保つため、ストレージ側のextract()経由で減らす
+            storage.extract(existing, size);
+            // IItemList<IAEItemStack> には remove(T) が無いため、0個になったエントリは
+            // ここでは削除せずリストに残す。AE2UELのItemListはイテレータ(MeaningfulItemIterator)
+            // が走査時に isMeaningful()==false (=0個)のエントリを自動で取り除くため、
+            // 次に getAvailableItems 等でリストを走査した時点で消え、肥大化はしない
+            // (AE2UELソースで確認済み)。
             markDirty();
         }
         return result;
@@ -278,14 +339,23 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return AccessRestriction.READ_WRITE;
     }
 
+    /**
+     * 修正メモ(分割セルの優先): 以前は常にfalseで、フィルターを設定したDISKが優先されなかった。
+     * ME Drive/Chest が包む MEInventoryHandler#isPrioritized は、外側のリストが空のため
+     * このメソッドの戻り値をそのまま使う。AE2UEL標準セル(MEInventoryHandler)と同じく、
+     * WHITELISTかつフィルターに一致する場合にtrueを返し、ネットワーク投入時に優先させる。
+     */
     @Override
     public boolean isPrioritized(IAEItemStack input) {
-        return false;
+        return partitionMode == IncludeExclude.WHITELIST
+                && !partitionList.isEmpty()
+                && partitionList.isListed(input);
     }
 
+    /** AE2UEL標準セルと同じく、フィルターを通らないものは受け入れ候補から外す。 */
     @Override
     public boolean canAccept(IAEItemStack input) {
-        return true;
+        return passesFilter(input);
     }
 
     @Override
@@ -298,9 +368,16 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return 0;
     }
 
+    /**
+     * 以前は {@code pass == 1} のみを返していたが、AE2UELのソースで確認したところ、
+     * ME Drive(DriveWatcher)/ME Chest はこのハンドラを MEInventoryHandler で包んでおり、
+     * そちらの validForPass() は常に true を返す(内側へ委譲しない)ため、実害は無かった。
+     * AE2標準セル(MEPassThrough)と挙動を揃え、包まれずに直接使われた場合にも
+     * pass 2 (新規タイプの投入)で候補から外れないよう、両方のpassで有効とする。
+     */
     @Override
     public boolean validForPass(int pass) {
-        return pass == 1;
+        return true;
     }
 
     @Override
@@ -314,39 +391,18 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
 
     @Override
     public boolean isPreformatted() {
-        // configに1つでもフィルターアイテムが設定されていればtrue(参考元と同じ仕様)。
-        // 何も設定されていなければ従来通り制限なし(false)。
-        return DiskConfig.hasAnyFilter(getConfigInventory());
-    }
-
-    /**
-     * 新規タイプの受け入れをタイプフィルターで判定する。
-     * 未設定(isPreformatted()==false)なら常にtrue(従来通り無制限)。
-     * WHITELIST: フィルターに一致するタイプのみ許可。
-     * BLACKLIST(Inverter Card挿入時): フィルターに一致しないタイプのみ許可。
-     * 既に格納済みのタイプへの追加投入(=このメソッドを通らない側)は、後からフィルターを
-     * 変更しても引き続き受け付ける(AE2標準セルと同じ「後付け変更は既存分に遡及しない」挙動)。
-     */
-    private boolean isAcceptedByFilter(ItemStack candidate) {
-        if (!isPreformatted()) {
-            return true;
-        }
-        boolean matches = DiskConfig.matches(getConfigInventory(), candidate);
-        return getIncludeExcludeMode() == IncludeExclude.WHITELIST ? matches : !matches;
+        return !partitionList.isEmpty();
     }
 
     @Override
     public boolean isFuzzy() {
-        // Fuzzy Cardが挿さっていればtrue(参考元のitem版DISKと同じ仕様)
-        return DiskUpgrades.hasFuzzyCard(getUpgradesInventory());
+        // AE2UEL標準セル(BasicCellInventoryHandler#isFuzzy)と同じ判定
+        return partitionList instanceof FuzzyPriorityList;
     }
 
     @Override
     public IncludeExclude getIncludeExcludeMode() {
-        // Inverter Cardが挿さっていればBLACKLISTへ反転(参考元と同じ仕様)。
-        // タイプフィルター(DiskConfig)を実装したことで、isAcceptedByFilter()経由で
-        // 実際にWHITELIST/BLACKLISTの挙動が反映されるようになっている。
-        return DiskUpgrades.hasInverterCard(getUpgradesInventory()) ? IncludeExclude.BLACKLIST : IncludeExclude.WHITELIST;
+        return partitionMode;
     }
 
     @Override
@@ -374,14 +430,15 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return ((ICellWorkbenchItem) cellItem.getItem()).getUpgradesInventory(cellItem);
     }
 
+    /** 参考元と同じく、タイプごとのbyte消費は無い。 */
     @Override
     public int getBytesPerType() {
-        return bytesPerType;
+        return 0;
     }
 
     @Override
     public boolean canHoldNewItem() {
-        return getFreeBytes() > bytesPerType;
+        return getFreeBytes() > 0;
     }
 
     @Override
@@ -394,18 +451,10 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return Math.max(0, usableBytes - getUsedBytes());
     }
 
-    /**
-     * 修正メモ: 以前は getStoredItemCount() のみ(=個数の合計)を返しており、
-     * 新規タイプ登録時に injectItems() 内で一時的にだけ差し引いていた
-     * bytesPerType分のコストが、ここには一切反映されていなかった。
-     * このため「タイプ数コストがワールド再読み込み後に消える」ように見える不整合が生じていた
-     * (実際にはリロード有無に関わらず、同一タイプの追加投入でコストを取り戻せてしまうバグだった)。
-     * getStoredItemTypes() * bytesPerType を加えることで、injectItems()の新規タイプ受け入れ判定
-     * (freeBytes - bytesPerType)と整合する「実際に消費しているbyte数」を返すようにした。
-     */
+    /** 参考元と同じく、使用byte数 = 合計個数(1アイテム = 1byte、タイプごとの消費なし)。 */
     @Override
     public long getUsedBytes() {
-        return getStoredItemCount() + getStoredItemTypes() * (long) bytesPerType;
+        return getStoredItemCount();
     }
 
     @Override
@@ -423,9 +472,10 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return storage == null ? 0 : storage.getStoredItemTypes();
     }
 
+    /** 新しいタイプは最低1個=1byteを使うため、空きbyte数がそのまま追加可能なタイプ数の上限になる。 */
     @Override
     public long getRemainingItemTypes() {
-        return getFreeBytes() / Math.max(1, bytesPerType);
+        return getFreeBytes();
     }
 
     @Override
@@ -438,11 +488,11 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         return 0;
     }
 
+    /** 4=空、1=空きあり、3=満杯(タイプ数上限が無いため「タイプ満杯」の2は使わない)。 */
     @Override
     public int getStatusForCell() {
         if (getUsedBytes() == 0) return 4;
         if (canHoldNewItem()) return 1;
-        if (getRemainingItemCount() > 0) return 2;
         return 3;
     }
 
@@ -459,9 +509,11 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
             if (tag != null) {
                 tag.removeTag(TAG_DISK_UUID);
             }
+            clearSummary(cellItem);
             storage = null;
         } else {
             DiskStorageManager.getCached().updateDisk(storage);
+            writeSummary(cellItem, storage.getStoredItemCount());
         }
     }
 

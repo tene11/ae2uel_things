@@ -38,6 +38,7 @@ item.ae2uelthings.disk_cell.upgrades.installed=装着中: %s
 item.ae2uelthings.disk_cell.upgrades.works_with_disk=DISKセル
 item.ae2uelthings.disk_cell.upgrades.works_with_disk_fluid=液体DISKセル
 item.ae2uelthings.disk_cell.unlimited_types=無制限
+item.ae2uelthings.disk_cell.uuid=DISK UUID: %s
 
 # --- CommandAe2uelThings ---
 command.ae2uelthings.help.recover=/ae2uelthings recover <uuid> [tier] - 指定UUIDのデータを保持する新しいDISKセルを生成します。tier: 1k/4k/16k/64k/256k/1024k/4096k/16384k/max(省略時は64k)。
@@ -58,5 +59,6 @@ command.ae2uelthings.recover.success.fluid=UUID %2$s の液体DISK(tier: %1$s)�
 command.ae2uelthings.recover.success.item.dropped=UUID %2$s のアイテムDISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
 command.ae2uelthings.recover.success.fluid.dropped=UUID %2$s の液体DISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
 command.ae2uelthings.recover.not_found=UUID %s のデータは見つかりませんでした。
+command.ae2uelthings.recover.over_capacity=警告: 保存データ(%2$s byte)が tier %1$s の容量(%3$s byte)を超えています。セルは満杯扱いになります(中身の取り出しは可能)。必要に応じてより大きいtierを指定してください。
 
 

@@ -21,7 +21,7 @@ package com.example.ae2uelthings.disk;
  * {@code nae2:material}(data 1〜4, 液体版は5〜8)を使う({@link #getComponentItemId()}/
  * {@link #getFluidComponentMeta()} 等参照)。</p>
  *
- * <p><b>TIER_MAXについて:</b>
+ * <p><b>TIER_MAXについて:</b> CrazyAEの大容量セルがintの上限
  * (2,147,483,647 = {@link Integer#MAX_VALUE})まで対応していることを参考にした
  * ティア。特定MODの検出とは無関係に常に登録される。{@link #getUsableBytes()} が
  * 最終的にAE2側へは {@code int} で渡る({@link com.example.ae2uelthings.api.IDiskCellDefinition#getBytes})
@@ -103,14 +103,19 @@ public enum DiskTier {
         return fluidComponentMeta >= 0;
     }
 
+    /** 拡張ティア(256k〜16384k)か。これらはNAE2導入環境でのみアイテムが登録される。 */
+    public boolean requiresNae2() {
+        return nae2Material;
+    }
+
+    /** このティアのアイテムが現在の環境で登録されているか(拡張ティアはNAE2導入時のみ)。 */
+    public boolean isAvailable() {
+        return !requiresNae2() || ModCompat.isNae2Loaded();
+    }
+
     /** アイテム登録名などに使う接尾辞 (例: "1k", "4k") */
     public String getSuffix() {
         return suffix;
-    }
-
-    /** このティアの容量。1item=1byteモデルでは理論最大格納数と一致する。 */
-    public int getTotalBytes() {
-        return totalBytes;
     }
 
     /**

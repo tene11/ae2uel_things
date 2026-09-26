@@ -27,7 +27,7 @@ public class DiskCellHandler implements ICellHandler {
         }
         IDiskCellDefinition cell = (IDiskCellDefinition) is.getItem();
         return (ICellInventoryHandler<T>) new DiskCellInventoryHandler(
-                is, cell.getBytes(is), cell.getBytesPerType(is), container);
+                is, cell.getBytes(is), container);
     }
 
     @Override

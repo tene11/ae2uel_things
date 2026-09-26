@@ -1,13 +1,14 @@
 package com.example.ae2uelthings.disk;
 
 import appeng.api.AEApi;
-import appeng.api.storage.ICellInventory;
-import appeng.api.storage.ICellInventoryHandler;
-import appeng.api.storage.IStorageChannel;
-import com.example.ae2uelthings.ExampleMod;
+import appeng.core.localization.GuiText;
+import appeng.core.localization.Tooltips;
 import com.example.ae2uelthings.Tags;
+import com.example.ae2uelthings.disk.storage.DiskCellInventoryHandler;
+import com.example.ae2uelthings.disk.storage.DiskFluidCellInventoryHandler;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.util.text.Style;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.translation.I18n;
 import net.minecraftforge.items.IItemHandler;
@@ -30,12 +31,9 @@ import java.util.List;
  * Forge標準の {@link ItemStackHandler} をセル本体のNBT(タグ名 "Upgrades")へ直接
  * 永続化する形で同等のスロットを再現する。</p>
  *
- * <p><b>要ローカル検証:</b> Fuzzy Card/Inverter Cardの判定に
- * {@code AEApi.instance().definitions().materials().cardFuzzy()/cardInverter()} を使っている。
- * これはAE2 rv6の想定APIだが、実際のメソッド名・戻り値型(IItemDefinitionそのものか
- * Optional&lt;IItemDefinition&gt;か)をIDE上で必ず確認すること。異なる場合は、
- * {@link DiskTier} のcomponentMetaと同じ考え方で appliedenergistics2:material の
- * 直接メタ値参照に切り替える必要がある。</p>
+ * <p>Fuzzy Card/Inverter Cardの判定には
+ * {@code AEApi.instance().definitions().materials().cardFuzzy()/cardInverter()}
+ * ({@code IItemDefinition#isSameAs}) を使っている。</p>
  */
 public final class DiskUpgrades {
 
@@ -178,87 +176,66 @@ public final class DiskUpgrades {
     }
 
     /**
-     * AE2本体のストレージセルと全く同じ書式("X of Y Bytes Used" / "X of Y Types" /
-     * Partitioned時はFuzzy・Preciseの行)でツールチップにセル情報を追加する
-     * (appeng.items.storage.AbstractStorageCell#addCheckedInformation参照。同じAPI
-     * {@code AEApi.instance().client().addCellInformation(...)} をそのまま使う)。
+     * DISKセルのツールチップに容量・フィルター情報を追加する(クライアント側で呼ばれる)。
      *
-     * <p>DISKセルは種類無制限(totalItemTypes == Integer.MAX_VALUE)なので、そのまま
-     * 呼び出すと"X of 2147483647 Types"のような不自然な表示になる。そのため
-     * バイト使用量・タイプ数の2行が追加された直後に2行目(タイプ数の行)だけを
-     * 特定し、「使用数 of 合計数」の部分を丸ごと「無制限」表記に差し替える
-     * (末尾の"Types"相当の単位語はAE2本体の翻訳をそのまま残すため、合計数の
-     * 直後から行末までを切り出して"無制限"に付け足す)。</p>
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    public static void appendCellInformation(ItemStack stack, List<String> tooltip, IStorageChannel<?> channel) {
-        try {
-            Object handlerObj = AEApi.instance().registries().cell().getCellInventory(stack, null, channel);
-            if (!(handlerObj instanceof ICellInventoryHandler)) {
-                if (handlerObj != null) {
-                    ExampleMod.LOGGER.warn(
-                            "[{}] appendCellInformation: unexpected handler type {}",
-                            Tags.MOD_ID, handlerObj.getClass().getName());
-                }
-                return;
-            }
-
-            ICellInventoryHandler handler = (ICellInventoryHandler) handlerObj;
-            ICellInventory cellInv = handler.getCellInv();
-
-            // AE2本体は必ず[バイト使用量, タイプ数, (preformatted時)Partitioned...]の順で追加する。
-            int typesLineIndex = tooltip.size() + 1;
-            AEApi.instance().client().addCellInformation(handler, tooltip);
-
-            // NAE2(Neeve's AE2: Extended Life Additions)の「Cell View」機能は、Mixinで
-            // appeng.core.api.ApiClientHelper#addCellInformation の末尾(RETURN時)に
-            // 直接割り込み、空行+「[キー]で中身を確認」のようなヒント行を無条件で追加する
-            // (co.neeve.nae2.mixin.jei.cellview.MixinApiClientHelper参照)。このMixinは
-            // ItemTooltipEventより前段の、このAPI呼び出し自体に直接割り込むため、
-            // ItemTooltipEvent側で後から取り除こうとしても間に合わない。ここで直接呼び出した
-            // 直後に取り除く必要がある。
-            //
-            // またこのヒントは appeng.api.implementations.items.IStorageCell を実装した
-            // アイテムしか対象にしないJEI連携と対になっており、それを実装していない
-            // ae2uelthings のDISKセルでは「[キー]を押しても中身は表示されない」という
-            // 実態のないヒントになってしまうため、そもそも表示しない。
-            stripNae2CellViewHint(tooltip);
-
-            if (cellInv != null && typesLineIndex < tooltip.size() && cellInv.getTotalItemTypes() >= Integer.MAX_VALUE) {
-                String original = tooltip.get(typesLineIndex);
-                String totalStr = String.valueOf(cellInv.getTotalItemTypes());
-                String unlimitedText = I18n.translateToLocal("item." + Tags.MOD_ID + ".disk_cell.unlimited_types");
-
-                int idx = original.indexOf(totalStr);
-                // "{使用数} {of} {合計数} {Types}" のうち、"{使用数} {of} {合計数}" を
-                // "無制限" に置き換え、末尾の" {Types}"(AE2本体の翻訳)はそのまま残す。
-                String rewritten = idx >= 0
-                        ? unlimitedText + original.substring(idx + totalStr.length())
-                        : unlimitedText;
-                tooltip.set(typesLineIndex, rewritten);
-            }
-        } catch (Exception | LinkageError e) {
-            ExampleMod.LOGGER.warn("[{}] appendCellInformation: ", Tags.MOD_ID, e);
-        }
-    }
-
-    /**
-     * NAE2の「Cell View」Mixinがappeng.core.api.ApiClientHelper#addCellInformationの
-     * 末尾に無条件で追加する「空行」+「ヒント行」の2行を取り除く。
+     * <p>修正メモ(クライアント/サーバー間のデータ競合対策): 以前はここで
+     * {@code AEApi.instance().registries().cell().getCellInventory(...)} を呼んでおり、
+     * サーバー側の {@link com.example.ae2uelthings.disk.storage.DiskStorageManager} を
+     * クライアント(描画スレッド)から直接読み書きしていた。シングルプレイではサーバースレッドと
+     * 同時にアクセスして ConcurrentModificationException になる恐れがあり、マルチプレイでは
+     * クライアント側にデータが無いため常に「0 of X Bytes Used」と表示されていた。</p>
      *
-     * <p>NAE2側にこの2行だけを狙い撃ちできる判定APIは無いため、「末尾が空行で、かつ
-     * その直前にもう1行ある」という組み合わせ(AE2本体がこの位置に空行を単独で
-     * 追加することは無い)と、NAE2がロードされていることの2条件で判定する。
-     * 該当しなければ何もしない(誤って自前の行やAE2本体の行を消さないための保険)。</p>
+     * <p>参考元(AE2Things)の DISKCellHandler#addCellInformationToTooltip と同じく、
+     * サーバー側の persist() でセル自身のNBTへ書き込んだ要約値
+     * ({@link DiskCellInventoryHandler#TAG_ITEM_COUNT})
+     * と、セル自身が持つ config/upgrades だけを読む。ItemStackのNBTはバニラの仕組みで
+     * クライアントへ同期されるため、シングル/マルチどちらでも同じ表示になる。
+     * AE2本体の addCellInformation を通らなくなったため、NAE2の「Cell View」ヒント行の
+     * 除去処理も不要になった。</p>
+     *
+     * <p>表示する行(AE2本体のセルと同じ書式):</p>
+     * <ul>
+     *   <li>「X of Y Bytes Used」</li>
+     *   <li>「無制限 Types」(DISKは種類無制限のため)</li>
+     *   <li>フィルター設定時のみ「[Partitioned] - Included/Excluded Precise/Fuzzy」</li>
+     *   <li>F3+H(詳細表示)時のみ「Disk UUID: ...」</li>
+     * </ul>
+     *
+     * @param totalBytes   セルの総byte数
+     * @param fluid        液体DISKならtrue(合計量はmBで保存されているためbyte換算する)
+     * @param advanced     F3+Hの詳細表示が有効か({@code ITooltipFlag#isAdvanced()})
      */
-    private static void stripNae2CellViewHint(List<String> tooltip) {
-        if (!ModCompat.isNae2Loaded()) {
-            return;
+    public static void appendCellInformation(ItemStack stack, List<String> tooltip, long totalBytes,
+                                             boolean fluid, IItemHandler config, IItemHandler upgrades, boolean advanced) {
+        NBTTagCompound tag = stack.getTagCompound();
+        long count = tag != null ? tag.getLong(DiskCellInventoryHandler.TAG_ITEM_COUNT) : 0;
+
+        // 使用byte数。DiskCellInventoryHandler/DiskFluidCellInventoryHandler#getUsedBytes と同じ計算
+        // (参考元と同じく合計個数そのまま。液体は mB → byte を切り上げ換算)。計算方法を変える場合は両方を揃えること。
+        long storedBytes = count;
+        if (fluid) {
+            int mbPerByte = DiskFluidCellInventoryHandler.MB_PER_BYTE;
+            storedBytes = count <= 0 ? 0 : (count + mbPerByte - 1) / mbPerByte;
         }
-        int size = tooltip.size();
-        if (size >= 2 && tooltip.get(size - 2).isEmpty()) {
-            tooltip.remove(size - 1);
-            tooltip.remove(size - 2);
+        tooltip.add(Tooltips.bytesUsed(storedBytes, totalBytes).getFormattedText());
+
+        String unlimitedText = I18n.translateToLocal("item." + Tags.MOD_ID + ".disk_cell.unlimited_types");
+        tooltip.add(Tooltips.of(
+                Tooltips.of(unlimitedText).setStyle(new Style().setColor(TextFormatting.LIGHT_PURPLE)),
+                Tooltips.of(" "),
+                Tooltips.of(GuiText.Types)).getFormattedText());
+
+        if (DiskConfig.hasAnyFilter(config)) {
+            // DiskCellInventoryHandler#getIncludeExcludeMode / #isFuzzy と同じ判定
+            String list = (hasInverterCard(upgrades) ? GuiText.Excluded : GuiText.Included).getLocal();
+            String mode = (!fluid && hasFuzzyCard(upgrades) ? GuiText.Fuzzy : GuiText.Precise).getLocal();
+            tooltip.add("[" + GuiText.Partitioned.getLocal() + "]" + " - " + list + ' ' + mode);
+        }
+
+        if (advanced && tag != null && tag.hasKey(DiskCellInventoryHandler.TAG_DISK_UUID)) {
+            tooltip.add(TextFormatting.GRAY + I18n.translateToLocalFormatted(
+                    "item." + Tags.MOD_ID + ".disk_cell.uuid",
+                    TextFormatting.AQUA + tag.getString(DiskCellInventoryHandler.TAG_DISK_UUID)));
         }
     }
 }
