@@ -79,15 +79,11 @@ dependencies {
     implementation rfg.deobf('curse.maven:ae2-extended-life-570458:5411078')
 
 
-    // HEI(4.35.0)
-    implementation rfg.deobf('curse.maven:had-enough-items-557549:8934963')
-
-    // Mouse Tweaks Unofficial(3.1.5)
-    implementation rfg.deobf('curse.maven:mouse-tweaks-unofficial-461660:5876158')
-
     // ============================================================
     // 以下はテスト用。
     // ============================================================
+    runtimeOnly rfg.deobf('curse.maven:had-enough-items-557549:8934963')
+    runtimeOnly rfg.deobf('curse.maven:mouse-tweaks-unofficial-461660:5876158')
     //runtimeOnly rfg.deobf('curse.maven:codechicken-lib-1-8-242818:2779848')
     //runtimeOnly rfg.deobf('curse.maven:gregtech-ce-unofficial-557242:5519022')
     //runtimeOnly rfg.deobf('curse.maven:nae2-884359:5380800')
