@@ -65,6 +65,29 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     /** UUID未採番(=まだ何も挿入されたことがない)の場合はnull */
     private DiskFluidCellStorage storage;
 
+    /**
+     * 最後のpersist()以降に中身の変更が無ければtrue(参考元 DISKCellInventory#isPersisted と同じ)。
+     * AE2UELのME Driveはスロットへアクセスするたびに persist() を呼ぶため、変更が無い場合は
+     * 何もしないようにして無駄なNBT書き込みを避ける。また、データを読み込めなかったDISK
+     * (中身が空に見える)のUUIDが、触っただけでセルから消されてしまうのも防ぐ。
+     */
+    private boolean persisted = true;
+
+    /**
+     * セルのDiskUUIDタグが不正、またはそのUUIDのデータが読み込みに失敗している場合はtrue。
+     * 中身があるものとして扱い、投入・分解を拒否してUUIDタグも書き換えない(データ保護のため)。
+     */
+    private boolean locked;
+
+    /** セルのDiskUUIDタグから読んだUUID(タグが無い・不正ならnull)。最初の投入時はこれを引き継ぐ。 */
+    private UUID cellUuid;
+
+    /**
+     * UUIDはあるが、マネージャーにそのデータが無いセルか(別ワールドへ持ち込んだ・.datを巻き戻した等)。
+     * UUIDは外さず、分解もさせない。投入は同じUUIDのまま行える(1回入れて空にすれば通常の空セルに戻る)。
+     */
+    private boolean missing;
+
     public DiskFluidCellInventoryHandler(ItemStack cellItem, long usableBytes, ISaveProvider container) {
         this.cellItem = cellItem;
         this.usableBytes = usableBytes;
@@ -82,20 +105,92 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     // ------------------------------------------------------------------
 
     private DiskFluidCellStorage loadExisting() {
+        DiskStorageManager manager = DiskStorageManager.getCached();
+
+        // 修正メモ(データファイル破損時の保護): DISKデータファイル全体の読み込みに失敗している間は、
+        // UUIDの有無にかかわらず全セルをロックする(投入しても保存されず、空に見えるセルを
+        // 分解・後片付けするとUUIDが失われるため)。詳細は DiskStorageManager#refresh 参照。
+        if (manager.isLoadFailed()) {
+            locked = true;
+            return null;
+        }
+
         NBTTagCompound tag = cellItem.getTagCompound();
         if (tag == null || !tag.hasKey(TAG_DISK_UUID)) {
             return null;
         }
-        UUID uuid = UUID.fromString(tag.getString(TAG_DISK_UUID));
-        if (!DiskStorageManager.getCached().hasFluidDisk(uuid)) {
-            ExampleMod.LOGGER.warn(
-                    "[{}] 液体DISK UUID={} はセルに記録されているが、DiskStorageManagerに見つからない"
-                            + " (空データとして扱う。DiskStorageEventHandlerがイベントバスに登録されているか確認すること)",
+        String rawUuid = tag.getString(TAG_DISK_UUID);
+
+        // 修正メモ(不正UUIDでのクラッシュ対策): 以前は UUID.fromString() の例外を捕まえておらず、
+        // NBTの破損や手動編集でDiskUUIDが不正な文字列になったセルがME Driveに入ると
+        // IllegalArgumentException でサーバーごと落ちていた。セルをロックし(投入・分解不可、
+        // UUIDタグは書き換えない)、ログに残すだけにする。
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(rawUuid);
+        } catch (IllegalArgumentException e) {
+            locked = true;
+            if (DiskStorageManager.shouldReport("invalid:" + rawUuid)) {
+                ExampleMod.LOGGER.error(
+                        "[{}] 液体DISKセルのDiskUUIDタグが不正です (\"{}\")。"
+                                + "データ保護のため、このセルをロックします(投入・分解不可)。",
+                        Tags.MOD_ID, rawUuid);
+            }
+            return null;
+        }
+
+        // 修正メモ(読み込み失敗DISKの保護): DiskStorageManagerが読み込みに失敗して生NBTのまま
+        // 保持しているDISKは、以前は空のセルに見えていたため、スニーク右クリックで分解できてしまい
+        // セル側のUUID(=データへの唯一の参照)が失われていた。中身ありとして扱いロックする。
+        if (manager.isUnreadableFluidDisk(rawUuid)) {
+            locked = true;
+            if (DiskStorageManager.shouldReport("unreadable:" + uuid)) {
+                ExampleMod.LOGGER.error(
+                        "[{}] 液体DISK UUID={} のデータは読み込みに失敗しているため、このセルをロックします"
+                                + "(投入・分解不可)。ワールド読み込み時のログを確認してください。",
+                        Tags.MOD_ID, uuid);
+            }
+            return null;
+        }
+
+        cellUuid = uuid;
+
+        // 修正メモ(データが見つからないセルの保護): 以前は getOrCreate で空のデータを作り、
+        // 「空のDISK」として次のpersist()でセルからUUIDを外していた。そのため、.datの読み込み失敗・
+        // 巻き戻し・別ワールドへの持ち込みなど、データが一時的に見えないだけの場合でも
+        // セル側のUUID(=データへの唯一の参照)が失われ、復旧できなくなっていた。
+        // データが無い場合はUUIDを保持したまま「データ無し」状態にし、分解を禁止する。
+        DiskFluidCellStorage existing = manager.getFluidDisk(uuid);
+        if (existing == null) {
+            if (manager.isLoaded()) {
+                missing = true;
+                if (DiskStorageManager.shouldReport("missing:" + uuid)) {
+                    ExampleMod.LOGGER.warn(
+                            "[{}] 液体DISK UUID={} のデータがこのワールドに見つかりません。"
+                                    + "UUIDは保持し、分解を禁止します(投入は同じUUIDのまま可能)。",
+                            Tags.MOD_ID, uuid);
+                }
+            }
+            return null;
+        }
+        // ここに来るのは、マネージャーに空のまま残っているDISK(=このセッション中に空になり、
+        // まだ後片付けされていないもの)だけ。これはUUIDを外してよい。
+        if (existing.isEmpty() && manager.isLoaded()) {
+            // 修正メモ(空のUUID残留対策): 空になった後、persist()が呼ばれる前にハンドラが
+            // 作り直されると、UUIDだけがセルに残る(マネージャーは空のDISKを保存しないため、
+            // 次回起動時は「見つからない」状態になる)。以前はここで毎回WARNを出すだけで、
+            // persisted=trueの初期値のためUUIDが二度と消えなかった。読み込み失敗分は上で
+            // 除外済みなので、未保存扱いにして次のpersist()で空のセルとして後片付けさせる。
+            // (ワールド読み込み前やクライアント側のダミーマネージャーでは何もしない)
+            persisted = false;
+            ExampleMod.LOGGER.debug("[{}] 液体DISK UUID={} は空のため、次の保存時にセルからUUIDを外します",
                     Tags.MOD_ID, uuid);
         }
-        DiskFluidCellStorage existing = DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
-        // 移行処理: 要約NBT("ic"=合計mB)が無い旧セルは、実データがあれば補う
-        if (!tag.hasKey(DiskCellInventoryHandler.TAG_ITEM_COUNT) && !existing.isEmpty()) {
+        // 移行処理: 要約NBT("ic")が無い旧セルは、実データがあれば補う
+        // (クライアント側のダミーマネージャーでは中身が空なので書き込まれない)。
+        // 読み込み時にエントリが削除されて実データと食い違っている場合も補正する
+        // (AE2UELが読み込み直後に "ic" を再計算して書き直すのと同じ)。
+        if (!existing.isEmpty() && tag.getLong(DiskCellInventoryHandler.TAG_ITEM_COUNT) != existing.getStoredItemCount()) {
             DiskCellInventoryHandler.writeSummary(cellItem, existing.getStoredItemCount());
         }
         return existing;
@@ -110,8 +205,11 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
             tag = new NBTTagCompound();
             cellItem.setTagCompound(tag);
         }
-        UUID uuid = UUID.randomUUID();
+        // データが見つからないセル等、UUIDが既にある場合はそれを引き継ぐ(参照を上書きしない)
+        UUID uuid = cellUuid != null ? cellUuid : UUID.randomUUID();
         tag.setString(TAG_DISK_UUID, uuid.toString());
+        cellUuid = uuid;
+        missing = false;
         storage = DiskStorageManager.getCached().getOrCreateFluidDisk(uuid);
         return storage;
     }
@@ -125,6 +223,7 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         // 実データ(DiskFluidCellStorage)はマネージャー内の同じインスタンスを直接書き換えているので、
         // 変更の都度マネージャーをdirtyにしておけば、次の保存で確実に書き出される。
         DiskStorageManager.getCached().markDirty();
+        persisted = false;
         if (container != null) {
             container.saveChanges(this);
         } else {
@@ -161,6 +260,9 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     /** 残りmB容量(参考元と同じく、タイプごとの消費は無い) */
     private long getFreeMb() {
+        if (locked) {
+            return 0;
+        }
         return Math.max(0, getTotalMb() - getStoredMb());
     }
 
@@ -171,6 +273,12 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     @Override
     public IAEFluidStack injectItems(IAEFluidStack input, Actionable mode, IActionSource src) {
         if (input == null || input.getStackSize() <= 0) return input;
+
+        // ロック中(不正UUID・読み込み失敗)のセルには何も入れない。入れると新しいUUIDが
+        // 採番され、元のデータへの参照が上書きされてしまうため。
+        if (locked) {
+            return input;
+        }
 
         // 参考元と同じく、フィルターは既存タイプへの追加投入も含めて毎回適用する
         if (!passesFilter(input)) {
@@ -238,7 +346,8 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     /** アイテム版と同じく、WHITELISTかつフィルターに一致する液体はネットワーク投入時に優先させる。 */
     @Override
     public boolean isPrioritized(IAEFluidStack input) {
-        return partitionMode == IncludeExclude.WHITELIST
+        return !locked
+                && partitionMode == IncludeExclude.WHITELIST
                 && !partitionList.isEmpty()
                 && partitionList.isListed(input);
     }
@@ -246,7 +355,7 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     /** AE2UEL標準セルと同じく、フィルターを通らないものは受け入れ候補から外す。 */
     @Override
     public boolean canAccept(IAEFluidStack input) {
-        return passesFilter(input);
+        return !locked && passesFilter(input);
     }
 
     @Override
@@ -340,13 +449,23 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     @Override
     public long getFreeBytes() {
+        if (locked) {
+            return 0;
+        }
         return Math.max(0, usableBytes - getUsedBytes());
     }
 
-    /** 使用byte数 = 合計mBのbyte換算(タイプごとの消費なし)。 */
+    /**
+     * AE2ネットワークに公開する「使用byte数」= 合計mBのbyte換算(タイプごとの消費なし)。
+     * 実データは生のmBで持っているため、ここで /1000(切り上げ)して byte換算する。
+     * 切り上げにしているのは、端数mBがあるのに使用量が0byteと過小報告されて
+     * 容量オーバーの温床になるのを防ぐため。
+     */
     @Override
     public long getUsedBytes() {
-        return getStoredItemCount();
+        long mb = getStoredMb();
+        if (mb <= 0) return 0;
+        return (mb + MB_PER_BYTE - 1) / MB_PER_BYTE;
     }
 
     @Override
@@ -355,15 +474,13 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
     }
 
     /**
-     * AE2ネットワークに公開する「使用byte数」。実データは生のmBで持っているため、
-     * ここで /1000(切り上げ)して byte換算する。切り上げにしているのは、
-     * 端数mBがあるのに使用量が0byteと過小報告されて容量オーバーの温床になるのを防ぐため。
+     * 修正メモ(単位の不一致): 以前はここでbyte換算した値を返していたが、AE2UEL標準の液体セル
+     * (AbstractCellInventory)と同じく、「個数」系のメソッドは液体の実量(mB)、
+     * 「byte」系のメソッドはbyteで返すように揃えた。
      */
     @Override
     public long getStoredItemCount() {
-        long mb = getStoredMb();
-        if (mb <= 0) return 0;
-        return (mb + MB_PER_BYTE - 1) / MB_PER_BYTE;
+        return getStoredMb();
     }
 
     @Override
@@ -377,19 +494,30 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         return getFreeMb();
     }
 
+    /** 残りの格納可能量(mB)。 */
     @Override
     public long getRemainingItemCount() {
-        return getFreeBytes();
+        return getFreeMb();
     }
 
+    /**
+     * 使用中の最後の1byteのうち、まだ使っていないmB(AE2UEL標準セルと同じ意味)。
+     * getFreeBytes() × 1000 + この値 = getRemainingItemCount() になる。
+     */
     @Override
     public int getUnusedItemCount() {
-        return 0;
+        if (locked) {
+            return 0;
+        }
+        long unused = getUsedBytes() * MB_PER_BYTE - getStoredMb();
+        return (int) Math.max(0, Math.min(unused, MB_PER_BYTE - 1));
     }
 
     /** 4=空、1=空きあり、3=満杯(タイプ数上限が無いため「タイプ満杯」の2は使わない)。 */
     @Override
     public int getStatusForCell() {
+        // ロック中は満杯(赤)表示にして、異常があることがドライブ上で分かるようにする
+        if (locked) return 3;
         if (getStoredMb() == 0) return 4;
         if (canHoldNewItem()) return 1;
         return 3;
@@ -397,9 +525,10 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
 
     @Override
     public void persist() {
-        if (storage == null) {
+        if (persisted || storage == null) {
             return;
         }
+        persisted = true;
         if (storage.isEmpty()) {
             // 空になったらマネージャー側の参照とItemStack側のUUIDを両方消す
             DiskStorageManager.getCached().removeFluidDisk(storage.getUUID());
@@ -409,6 +538,7 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
             }
             DiskCellInventoryHandler.clearSummary(cellItem);
             storage = null;
+            cellUuid = null;
         } else {
             DiskStorageManager.getCached().updateFluidDisk(storage);
             // ツールチップ用の要約値。合計量は生のmBのまま保存する(表示側でbyte換算)
@@ -416,7 +546,18 @@ public class DiskFluidCellInventoryHandler implements ICellInventoryHandler<IAEF
         }
     }
 
+    /** ロック中・データ無しのセルは中身ありとして扱う(分解させないため)。 */
     public boolean isEmpty() {
-        return storage == null || storage.isEmpty();
+        return !locked && !missing && (storage == null || storage.isEmpty());
+    }
+
+    /** UUIDはあるが、このワールドにそのデータが無いセルか(分解禁止)。 */
+    public boolean isMissing() {
+        return missing;
+    }
+
+    /** DiskUUIDタグが不正、またはデータの読み込みに失敗していてロックされているか。 */
+    public boolean isLocked() {
+        return locked;
     }
 }

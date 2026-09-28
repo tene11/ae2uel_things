@@ -24,11 +24,15 @@ import com.example.ae2uelthings.Tags;
 import com.example.ae2uelthings.api.IDiskCellDefinition;
 import com.example.ae2uelthings.disk.DiskConfig;
 import com.example.ae2uelthings.disk.DiskUpgrades;
+import it.unimi.dsi.fastutil.ints.Int2ByteOpenHashMap;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.items.IItemHandler;
 
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * DISKセル1個ぶんの、AE2ネットワークから見た「取引窓口」。
@@ -81,6 +85,29 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     /** UUID未採番(=まだ何も挿入されたことがない)の場合はnull */
     private DiskCellStorage storage;
 
+    /**
+     * 最後のpersist()以降に中身の変更が無ければtrue(参考元 DISKCellInventory#isPersisted と同じ)。
+     * AE2UELのME Driveはスロットへアクセスするたびに persist() を呼ぶため、変更が無い場合は
+     * 何もしないようにして無駄なNBT書き込みを避ける。また、データを読み込めなかったDISK
+     * (中身が空に見える)のUUIDが、触っただけでセルから消されてしまうのも防ぐ。
+     */
+    private boolean persisted = true;
+
+    /**
+     * セルのDiskUUIDタグが不正、またはそのUUIDのデータが読み込みに失敗している場合はtrue。
+     * 中身があるものとして扱い、投入・分解を拒否してUUIDタグも書き換えない(データ保護のため)。
+     */
+    private boolean locked;
+
+    /** セルのDiskUUIDタグから読んだUUID(タグが無い・不正ならnull)。最初の投入時はこれを引き継ぐ。 */
+    private UUID cellUuid;
+
+    /**
+     * UUIDはあるが、マネージャーにそのデータが無いセルか(別ワールドへ持ち込んだ・.datを巻き戻した等)。
+     * UUIDは外さず、分解もさせない。投入は同じUUIDのまま行える(1回入れて空にすれば通常の空セルに戻る)。
+     */
+    private boolean missing;
+
     public DiskCellInventoryHandler(ItemStack cellItem, long usableBytes, ISaveProvider container) {
         this.cellItem = cellItem;
         this.usableBytes = usableBytes;
@@ -99,24 +126,92 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     // ------------------------------------------------------------------
 
     private DiskCellStorage loadExisting() {
+        DiskStorageManager manager = DiskStorageManager.getCached();
+
+        // 修正メモ(データファイル破損時の保護): DISKデータファイル全体の読み込みに失敗している間は、
+        // UUIDの有無にかかわらず全セルをロックする(投入しても保存されず、空に見えるセルを
+        // 分解・後片付けするとUUIDが失われるため)。詳細は DiskStorageManager#refresh 参照。
+        if (manager.isLoadFailed()) {
+            locked = true;
+            return null;
+        }
+
         NBTTagCompound tag = cellItem.getTagCompound();
         if (tag == null || !tag.hasKey(TAG_DISK_UUID)) {
             return null;
         }
-        UUID uuid = UUID.fromString(tag.getString(TAG_DISK_UUID));
-        if (!DiskStorageManager.getCached().hasDisk(uuid)) {
-            // UUIDはItemStack側に記録されているのに、マネージャー側にデータが無い状態。
-            // DiskStorageEventHandlerが登録されておらずrefresh()が一度も走っていない、
-            // またはロード処理自体に問題がある可能性が高い。
-            ExampleMod.LOGGER.warn(
-                    "[{}] DISK UUID={} はセルに記録されているが、DiskStorageManagerに見つからない"
-                            + " (空データとして扱う。DiskStorageEventHandlerがイベントバスに登録されているか確認すること)",
+        String rawUuid = tag.getString(TAG_DISK_UUID);
+
+        // 修正メモ(不正UUIDでのクラッシュ対策): 以前は UUID.fromString() の例外を捕まえておらず、
+        // NBTの破損や手動編集でDiskUUIDが不正な文字列になったセルがME Driveに入ると
+        // IllegalArgumentException でサーバーごと落ちていた。セルをロックし(投入・分解不可、
+        // UUIDタグは書き換えない)、ログに残すだけにする。
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(rawUuid);
+        } catch (IllegalArgumentException e) {
+            locked = true;
+            if (DiskStorageManager.shouldReport("invalid:" + rawUuid)) {
+                ExampleMod.LOGGER.error(
+                        "[{}] DISKセルのDiskUUIDタグが不正です (\"{}\")。"
+                                + "データ保護のため、このセルをロックします(投入・分解不可)。",
+                        Tags.MOD_ID, rawUuid);
+            }
+            return null;
+        }
+
+        // 修正メモ(読み込み失敗DISKの保護): DiskStorageManagerが読み込みに失敗して生NBTのまま
+        // 保持しているDISKは、以前は空のセルに見えていたため、スニーク右クリックで分解できてしまい
+        // セル側のUUID(=データへの唯一の参照)が失われていた。中身ありとして扱いロックする。
+        if (manager.isUnreadableDisk(rawUuid)) {
+            locked = true;
+            if (DiskStorageManager.shouldReport("unreadable:" + uuid)) {
+                ExampleMod.LOGGER.error(
+                        "[{}] DISK UUID={} のデータは読み込みに失敗しているため、このセルをロックします"
+                                + "(投入・分解不可)。ワールド読み込み時のログを確認してください。",
+                        Tags.MOD_ID, uuid);
+            }
+            return null;
+        }
+
+        cellUuid = uuid;
+
+        // 修正メモ(データが見つからないセルの保護): 以前は getOrCreate で空のデータを作り、
+        // 「空のDISK」として次のpersist()でセルからUUIDを外していた。そのため、.datの読み込み失敗・
+        // 巻き戻し・別ワールドへの持ち込みなど、データが一時的に見えないだけの場合でも
+        // セル側のUUID(=データへの唯一の参照)が失われ、復旧できなくなっていた。
+        // データが無い場合はUUIDを保持したまま「データ無し」状態にし、分解を禁止する。
+        DiskCellStorage existing = manager.getDisk(uuid);
+        if (existing == null) {
+            if (manager.isLoaded()) {
+                missing = true;
+                if (DiskStorageManager.shouldReport("missing:" + uuid)) {
+                    ExampleMod.LOGGER.warn(
+                            "[{}] DISK UUID={} のデータがこのワールドに見つかりません。"
+                                    + "UUIDは保持し、分解を禁止します(投入は同じUUIDのまま可能)。",
+                            Tags.MOD_ID, uuid);
+                }
+            }
+            return null;
+        }
+        // ここに来るのは、マネージャーに空のまま残っているDISK(=このセッション中に空になり、
+        // まだ後片付けされていないもの)だけ。これはUUIDを外してよい。
+        if (existing.isEmpty() && manager.isLoaded()) {
+            // 修正メモ(空のUUID残留対策): 空になった後、persist()が呼ばれる前にハンドラが
+            // 作り直されると、UUIDだけがセルに残る(マネージャーは空のDISKを保存しないため、
+            // 次回起動時は「見つからない」状態になる)。以前はここで毎回WARNを出すだけで、
+            // persisted=trueの初期値のためUUIDが二度と消えなかった。読み込み失敗分は上で
+            // 除外済みなので、未保存扱いにして次のpersist()で空のセルとして後片付けさせる。
+            // (ワールド読み込み前やクライアント側のダミーマネージャーでは何もしない)
+            persisted = false;
+            ExampleMod.LOGGER.debug("[{}] DISK UUID={} は空のため、次の保存時にセルからUUIDを外します",
                     Tags.MOD_ID, uuid);
         }
-        DiskCellStorage existing = DiskStorageManager.getCached().getOrCreateDisk(uuid);
-        // 移行処理: 要約NBT導入前に作られたセルには "ic" が無いため、実データがあれば補う
+        // 移行処理: 要約NBT("ic")が無い旧セルは、実データがあれば補う
         // (クライアント側のダミーマネージャーでは中身が空なので書き込まれない)。
-        if (!tag.hasKey(TAG_ITEM_COUNT) && !existing.isEmpty()) {
+        // 読み込み時にエントリが削除されて実データと食い違っている場合も補正する
+        // (AE2UELが読み込み直後に "ic" を再計算して書き直すのと同じ)。
+        if (!existing.isEmpty() && tag.getLong(TAG_ITEM_COUNT) != existing.getStoredItemCount()) {
             writeSummary(cellItem, existing.getStoredItemCount());
         }
         return existing;
@@ -157,8 +252,11 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
             tag = new NBTTagCompound();
             cellItem.setTagCompound(tag);
         }
-        UUID uuid = UUID.randomUUID();
+        // データが見つからないセル等、UUIDが既にある場合はそれを引き継ぐ(参照を上書きしない)
+        UUID uuid = cellUuid != null ? cellUuid : UUID.randomUUID();
         tag.setString(TAG_DISK_UUID, uuid.toString());
+        cellUuid = uuid;
+        missing = false;
         storage = DiskStorageManager.getCached().getOrCreateDisk(uuid);
         return storage;
     }
@@ -172,6 +270,7 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         // 実データ(DiskCellStorage)はマネージャー内の同じインスタンスを直接書き換えているので、
         // 変更の都度マネージャーをdirtyにしておけば、次の保存で確実に書き出される。
         DiskStorageManager.getCached().markDirty();
+        persisted = false;
         if (container != null) {
             container.saveChanges(this);
         } else {
@@ -216,8 +315,22 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
      * 1以上」であれば拒否する形で同等の効果を再現している。通常のAE2ストレージセルは
      * もちろん、ae2uelthings自身のDISKや他アドオンのセルにも汎用的に効く
      * (ただしItem/Fluid以外の独自チャンネルしか持たないセルには対応しない)。</p>
+     *
+     * <p><b>軽量化:</b> この判定はアイテム投入のたびに(SIMULATE/MODULATEの両方で)呼ばれるため、
+     * 「セルとして登録されているか」の結果を Item + メタデータ単位でキャッシュする
+     * ({@link #isCellItem})。セルでない普通のアイテム(投入の大半)は、ItemStackのコピー作成も
+     * CellRegistryの走査も行わずに即座にfalseを返す。セルだった場合だけ、従来どおり
+     * コピーを作って中身の有無を確認する。</p>
      */
     private static boolean isCellNestingPrevented(IAEItemStack input) {
+        // 修正メモ(投入のたびのコスト削減): 以前は毎回 createItemStack() でコピーを作ってから
+        // isCellHandled() を呼んでいたが、Flareで計測したところ投入処理のコストの大半を
+        // 占めていた(GT環境のように投入回数が多いと効いてくる)。セルかどうかは
+        // Item + メタデータで決まるため、その結果をキャッシュして先に判定する。
+        if (!isCellItem(input)) {
+            return false;
+        }
+
         // 修正メモ(共有ItemStack破壊対策): 以前は input.getDefinition() をそのまま渡していた。
         // getDefinition()はAE2が内部で共有しているItemStack(AESharedItemStackのキー)で、
         // 読み取り専用で扱う必要がある。AE2標準セルのハンドラは初期化時に
@@ -230,12 +343,53 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
         }
 
         ICellRegistry cellRegistry = AEApi.instance().registries().cell();
-        if (!cellRegistry.isCellHandled(stack)) {
-            return false;
-        }
-
         return hasUsedBytes(stack, cellRegistry, AEApi.instance().storage().getStorageChannel(IItemStorageChannel.class))
                 || hasUsedBytes(stack, cellRegistry, AEApi.instance().storage().getStorageChannel(IFluidStorageChannel.class));
+    }
+
+    /** Item → (メタデータ → 1:セル / 0:セルではない) のキャッシュ。{@link #isCellItem} 専用。 */
+    private static final Map<Item, Int2ByteOpenHashMap> CELL_ITEM_CACHE = new ConcurrentHashMap<>();
+
+    /**
+     * このアイテムがCellRegistryにセルとして登録されているか(Item + メタデータ単位でキャッシュ)。
+     *
+     * <p>キャッシュが無い組み合わせのときだけ、コピーしたItemStackで
+     * {@link ICellRegistry#isCellHandled} を呼んで結果を記録する(共有ItemStackは渡さない)。
+     * セルハンドラはmodの初期化時に登録され、ワールド内でアイテムが投入される頃には
+     * 増減しないため、結果は起動中ずっと有効。</p>
+     *
+     * <p>前提: セルかどうかはItemとメタデータで決まり、NBTには左右されない。AE2UEL標準セル・
+     * クリエイティブセル・このmodのDISKはいずれもItemの種類だけで判定している。
+     * NBTによってセル扱いが変わる独自ハンドラを持つアドオンがあると、その判定はすり抜ける
+     * (その場合もDISKの動作自体は壊れず、ネスト防止が効かないだけ)。</p>
+     */
+    private static boolean isCellItem(IAEItemStack input) {
+        Item item = input.getItem();
+        if (item == null) {
+            return false;
+        }
+        int meta = input.getItemDamage();
+
+        Int2ByteOpenHashMap byMeta = CELL_ITEM_CACHE.computeIfAbsent(item, k -> {
+            Int2ByteOpenHashMap m = new Int2ByteOpenHashMap();
+            m.defaultReturnValue((byte) -1);
+            return m;
+        });
+        byte cached;
+        synchronized (byMeta) {
+            cached = byMeta.get(meta);
+        }
+        if (cached >= 0) {
+            return cached == 1;
+        }
+
+        ItemStack copy = input.createItemStack();
+        boolean isCell = copy != null && !copy.isEmpty()
+                && AEApi.instance().registries().cell().isCellHandled(copy);
+        synchronized (byMeta) {
+            byMeta.put(meta, (byte) (isCell ? 1 : 0));
+        }
+        return isCell;
     }
 
     /** 指定チャンネルでこのセルの中身を取得し、使用byte数が1以上あるかを見る。対応チャンネルでなければfalse。 */
@@ -266,20 +420,27 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     public IAEItemStack injectItems(IAEItemStack input, Actionable mode, IActionSource src) {
         if (input == null || input.getStackSize() <= 0) return input;
 
+        // ロック中(不正UUID・読み込み失敗)のセルには何も入れない。入れると新しいUUIDが
+        // 採番され、元のデータへの参照が上書きされてしまうため。
+        if (locked) {
+            return input;
+        }
+
         // 参考元と同じく、フィルターは既存タイプへの追加投入も含めて毎回適用する
         if (!passesFilter(input)) {
             return input;
         }
+
+        // 参考元と同じく、空き容量(総byte数 − 合計個数)の範囲で受け入れる。
+        // 満杯のDISKでは下のネスト判定を行う必要が無いため、先に空き容量を見る。
+        long toAccept = Math.min(input.getStackSize(), getFreeBytes());
+        if (toAccept <= 0) return input;
 
         if (isCellNestingPrevented(input)) {
             // 参考元(AE2 MEGA Things)と同じ仕様: 中身が空でないストレージセル
             // (通常のAE2セル・別のDISK等)はDISKの中には格納できない(容量バイパス対策)。
             return input;
         }
-
-        // 参考元と同じく、空き容量(総byte数 − 合計個数)の範囲で受け入れる
-        long toAccept = Math.min(input.getStackSize(), getFreeBytes());
-        if (toAccept <= 0) return input;
 
         if (mode == Actionable.MODULATE) {
             // 個数・タイプ数のキャッシュを正しく保つため、必ずストレージ側のinsert()経由で増やす
@@ -347,7 +508,8 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
      */
     @Override
     public boolean isPrioritized(IAEItemStack input) {
-        return partitionMode == IncludeExclude.WHITELIST
+        return !locked
+                && partitionMode == IncludeExclude.WHITELIST
                 && !partitionList.isEmpty()
                 && partitionList.isListed(input);
     }
@@ -355,7 +517,7 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     /** AE2UEL標準セルと同じく、フィルターを通らないものは受け入れ候補から外す。 */
     @Override
     public boolean canAccept(IAEItemStack input) {
-        return passesFilter(input);
+        return !locked && passesFilter(input);
     }
 
     @Override
@@ -438,7 +600,7 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
 
     @Override
     public boolean canHoldNewItem() {
-        return getFreeBytes() > 0;
+        return !locked && getFreeBytes() > 0;
     }
 
     @Override
@@ -448,6 +610,9 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
 
     @Override
     public long getFreeBytes() {
+        if (locked) {
+            return 0;
+        }
         return Math.max(0, usableBytes - getUsedBytes());
     }
 
@@ -491,6 +656,8 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
     /** 4=空、1=空きあり、3=満杯(タイプ数上限が無いため「タイプ満杯」の2は使わない)。 */
     @Override
     public int getStatusForCell() {
+        // ロック中は満杯(赤)表示にして、異常があることがドライブ上で分かるようにする
+        if (locked) return 3;
         if (getUsedBytes() == 0) return 4;
         if (canHoldNewItem()) return 1;
         return 3;
@@ -498,9 +665,10 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
 
     @Override
     public void persist() {
-        if (storage == null) {
+        if (persisted || storage == null) {
             return;
         }
+        persisted = true;
         if (storage.isEmpty()) {
             // 空になったらマネージャー側の参照とItemStack側のUUIDを両方消し、
             // 空レコードがマネージャー内に溜まり続けるのを防ぐ
@@ -511,13 +679,25 @@ public class DiskCellInventoryHandler implements ICellInventoryHandler<IAEItemSt
             }
             clearSummary(cellItem);
             storage = null;
+            cellUuid = null;
         } else {
             DiskStorageManager.getCached().updateDisk(storage);
             writeSummary(cellItem, storage.getStoredItemCount());
         }
     }
 
+    /** ロック中・データ無しのセルは中身ありとして扱う(分解させないため)。 */
     public boolean isEmpty() {
-        return storage == null || storage.isEmpty();
+        return !locked && !missing && (storage == null || storage.isEmpty());
+    }
+
+    /** UUIDはあるが、このワールドにそのデータが無いセルか(分解禁止)。 */
+    public boolean isMissing() {
+        return missing;
+    }
+
+    /** DiskUUIDタグが不正、またはデータの読み込みに失敗していてロックされているか。 */
+    public boolean isLocked() {
+        return locked;
     }
 }

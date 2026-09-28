@@ -168,6 +168,22 @@ public class CommandAe2uelThings extends CommandBase {
                 .appendSibling(new TextComponentTranslation("command.ae2uelthings.getuuid.prefix"))
                 .appendSibling(uuidText);
         sender.sendMessage(prefix);
+
+        // データの状態に問題があれば、その旨も案内する
+        DiskStorageManager manager = DiskStorageManager.getCached();
+        if (manager.isLoadFailed()) {
+            // データファイル全体が読めず、全DISKがロックされている
+            sendPrefixed(sender, TextFormatting.YELLOW,
+                    new TextComponentTranslation("command.ae2uelthings.getuuid.load_failed"));
+        } else if (manager.isUnreadableDisk(uuid.toString()) || manager.isUnreadableFluidDisk(uuid.toString())) {
+            // 読み込みに失敗しているDISK(セルはロックされている)
+            sendPrefixed(sender, TextFormatting.YELLOW,
+                    new TextComponentTranslation("command.ae2uelthings.getuuid.unreadable"));
+        } else if (manager.isLoaded() && !manager.hasDisk(uuid) && !manager.hasFluidDisk(uuid)) {
+            // このワールドにデータが無い(UUIDは保持され、分解は禁止されている)
+            sendPrefixed(sender, TextFormatting.YELLOW,
+                    new TextComponentTranslation("command.ae2uelthings.getuuid.missing"));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -196,6 +212,11 @@ public class CommandAe2uelThings extends CommandBase {
 
         // DiskStorageManager を refresh() で取得する
         DiskStorageManager manager = DiskStorageManager.refresh();
+
+        // データファイル全体の読み込みに失敗している間は、どのDISKも正しく判定できないため復旧を止める
+        if (manager.isLoadFailed()) {
+            throw new CommandException("command.ae2uelthings.recover.load_failed");
+        }
 
         // itemディスク の復旧
         // 要注意: DiskCellInventoryHandler#loadExisting() は
@@ -253,6 +274,14 @@ public class CommandAe2uelThings extends CommandBase {
             long mb = fluidDisk.getStoredItemCount();
             int mbPerByte = DiskFluidCellInventoryHandler.MB_PER_BYTE;
             warnIfOverCapacity(sender, tier, mb <= 0 ? 0 : (mb + mbPerByte - 1) / mbPerByte);
+            return;
+        }
+
+        // 修正メモ: 以前は読み込みに失敗したDISKも「見つからない」と表示していた。
+        // データ自体はファイルに残っているため、本当に存在しない場合と区別して案内する。
+        if (manager.isUnreadableDisk(uuid.toString()) || manager.isUnreadableFluidDisk(uuid.toString())) {
+            sendPrefixed(sender, TextFormatting.RED,
+                    new TextComponentTranslation("command.ae2uelthings.recover.unreadable", uuid));
             return;
         }
 

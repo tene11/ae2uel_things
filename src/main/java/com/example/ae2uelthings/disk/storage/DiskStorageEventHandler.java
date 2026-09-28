@@ -14,6 +14,17 @@ public class DiskStorageEventHandler {
         }
     }
 
+    /**
+     * WorldServer#saveAllChunks は、WorldSavedData(DiskStorageManager)とチャンクの保存が
+     * 終わった後にこのイベントを発行する。ここで直近の保存データを .bak に書き出す。
+     */
+    @SubscribeEvent
+    public void onWorldSave(WorldEvent.Save event) {
+        if (isServerOverworld(event.getWorld())) {
+            DiskStorageManager.getCached().writeBackupIfPending();
+        }
+    }
+
     @SubscribeEvent
     public void onWorldUnload(WorldEvent.Unload event) {
         if (isServerOverworld(event.getWorld())) {

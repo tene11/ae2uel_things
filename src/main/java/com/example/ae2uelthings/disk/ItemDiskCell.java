@@ -16,6 +16,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.EnumActionResult;
 import net.minecraft.util.EnumHand;
+import net.minecraft.util.text.TextComponentTranslation;
+import net.minecraft.util.text.TextFormatting;
 import net.minecraft.world.World;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
@@ -115,10 +117,33 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
     @Override
     public ActionResult<ItemStack> onItemRightClick(World worldIn, EntityPlayer playerIn, EnumHand handIn) {
         ItemStack stack = playerIn.getHeldItem(handIn);
-        if (playerIn.isSneaking() && !worldIn.isRemote) {
-            if (isEmpty(stack)) {
+        // AE2UEL標準セル(AbstractStorageCell#disassembleDrive の getCurrentItem() == stack)と同じく、
+        // 分解はメインハンドに持っている時だけ行う
+        if (playerIn.isSneaking() && !worldIn.isRemote && handIn == EnumHand.MAIN_HAND) {
+            // 修正メモ(読み込み失敗DISKの保護): DiskUUIDが不正、またはデータを読み込めなかったセルは
+            // ロックされており分解できない(分解するとデータへの参照が失われるため)。理由を表示する。
+            DiskCellInventoryHandler handler = getDiskHandler(stack);
+            if (handler != null && handler.isLocked()) {
+                TextComponentTranslation message = new TextComponentTranslation(
+                        "item." + Tags.MOD_ID + ".disk_cell.locked");
+                message.getStyle().setColor(TextFormatting.RED);
+                playerIn.sendStatusMessage(message, true);
+                return new ActionResult<>(EnumActionResult.FAIL, stack);
+            }
+            // 修正メモ(データが見つからないセルの保護): UUIDはあるがこのワールドにデータが無いセルは、
+            // 分解するとデータへの参照(UUID)が失われるため分解させない。理由を表示する。
+            if (handler != null && handler.isMissing()) {
+                TextComponentTranslation message = new TextComponentTranslation(
+                        "item." + Tags.MOD_ID + ".disk_cell.missing");
+                message.getStyle().setColor(TextFormatting.YELLOW);
+                playerIn.sendStatusMessage(message, true);
+                return new ActionResult<>(EnumActionResult.FAIL, stack);
+            }
+            if (handler != null && handler.isEmpty()) {
                 ItemStack base = getDowngradeBaseStack();
                 ItemStack component = createComponentStack(tier);
+                // 手のスロットを空にする前に、挿さっているアップグレードカードを控えておく
+                List<ItemStack> upgradeCards = DiskUpgrades.getInstalledCards(getUpgradesInventory(stack));
                 if (!base.isEmpty()) {
                     // 本家AE2のAbstractStorageCell#disassembleDriveと同様、
                     // stack.shrink(1)で"count=0の同一オブジェクト"を手のスロットに
@@ -129,8 +154,14 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
                     // これを防ぐため、まずスロットをItemStack.EMPTYで明示的に空にしてから
                     // giveOrDropを行い、戻り値は処理後の最新の手のアイテムを再取得する。
                     playerIn.setHeldItem(handIn, ItemStack.EMPTY);
-                    giveOrDrop(playerIn, base);
+                    // 修正メモ(分解時のカード消失対策): 以前はカード(Fuzzy/Inverter)がセルと一緒に
+                    // 消えていた。AE2UEL標準セル(AbstractStorageCell#disassembleDrive)と同じく、
+                    // コア → アップグレードカード → ハウジングの順にインベントリへ返す(入らなければドロップ)。
                     giveOrDrop(playerIn, component);
+                    for (ItemStack card : upgradeCards) {
+                        giveOrDrop(playerIn, card);
+                    }
+                    giveOrDrop(playerIn, base);
                     if (playerIn.inventoryContainer != null) {
                         playerIn.inventoryContainer.detectAndSendChanges();
                     }
@@ -141,19 +172,20 @@ public class ItemDiskCell extends Item implements ICellWorkbenchItem, IDiskCellD
         return super.onItemRightClick(worldIn, playerIn, handIn);
     }
 
-    private boolean isEmpty(ItemStack stack) {
+    /**
+     * このセルのハンドラを取得する(ロック・データ無し・空の判定用)。取得できなければnull。
+     * 以前は判定ごとにハンドラを作り直していたが、1回の右クリックで1回だけ作るようにした。
+     */
+    private DiskCellInventoryHandler getDiskHandler(ItemStack stack) {
         try {
             Object handlerObj = AEApi.instance().registries().cell()
                     .getCellInventory(stack, null, getChannel());
-            if (handlerObj instanceof DiskCellInventoryHandler) {
-                return ((DiskCellInventoryHandler) handlerObj).isEmpty();
-            }
+            return handlerObj instanceof DiskCellInventoryHandler ? (DiskCellInventoryHandler) handlerObj : null;
         } catch (Exception | LinkageError e) {
-
-            return false;
+            return null;
         }
-        return false;
     }
+
 
 
     /**

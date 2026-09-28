@@ -4,6 +4,9 @@ import appeng.api.AEApi;
 import appeng.api.storage.channels.IItemStorageChannel;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IItemList;
+import appeng.core.AEConfig;
+import com.example.ae2uelthings.ExampleMod;
+import com.example.ae2uelthings.Tags;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -18,6 +21,17 @@ import java.util.UUID;
  * DiskCellInventoryHandler#getUsedBytes 経由で、1回の投入ごとに複数回・ドライブの状態更新でも
  * 呼ばれるため、種類数の多いDISKほど投入/取出のたびに O(種類数) の負荷がかかっていた。
  * 合計個数と格納タイプ数をこのクラス内でキャッシュし、O(1)で返すようにした。</p>
+ *
+ * <p>読み込めないエントリの扱い(AE2UEL標準セルと同じ仕様): AE2UELの
+ * BasicCellInventory#loadCellItem / AbstractCellInventory#loadCellItems に合わせている。
+ * <ul>
+ *   <li>追加元のmodが外れた等で、この環境に存在しないアイテムのエントリは、警告ログを出して削除する
+ *       (容量・タイプ数からも外れ、次の保存でファイルからも消える)。</li>
+ *   <li>読み込み中に例外が出たエントリは、AE2UELの設定 {@code removeCrashingItemsOnLoad} がtrueなら
+ *       警告ログを出して削除し、falseなら例外をそのまま投げる(AE2UELはここでクラッシュする。
+ *       このmodでは {@link DiskStorageManager#readFromNBT} がそのDISKを読み込み失敗として保持・ロックする)。</li>
+ * </ul>
+ * 削除があったDISKは {@link #getRemovedOnLoad()} が1以上になり、マネージャーが保存し直す。</p>
  *
  * <p><b>注意:</b> キャッシュを正しく保つため、中身の増減は必ず {@link #insert} / {@link #extract}
  * 経由で行うこと。{@link #getItems()} は読み取り(findPrecise・走査)専用で、返ってきたリストや
@@ -36,6 +50,9 @@ public class DiskCellStorage {
     private long storedCount;
     /** stackSize > 0 のエントリ数=格納タイプ数(キャッシュ) */
     private int storedTypes;
+
+    /** 読み込み時に削除したエントリ数(AE2UEL標準セルと同じく、読めないエントリは削除する) */
+    private int removedOnLoad;
 
     public DiskCellStorage(UUID uuid) {
         this.uuid = uuid;
@@ -106,6 +123,11 @@ public class DiskCellStorage {
         return storedTypes;
     }
 
+    /** 読み込み時に削除したエントリ数(0なら削除なし)。 */
+    public int getRemovedOnLoad() {
+        return removedOnLoad;
+    }
+
     /** キャッシュを実データから数え直す(NBT読み込み直後に使う)。 */
     private void recalculate() {
         storedCount = 0;
@@ -159,15 +181,33 @@ public class DiskCellStorage {
         IItemList<IAEItemStack> items = getChannel().createList();
         for (int i = 0; i < list.tagCount(); i++) {
             NBTTagCompound entry = list.getCompoundTagAt(i);
-            ItemStack template = new ItemStack(entry.getCompoundTag(TAG_ITEM));
             long count = entry.getLong(TAG_COUNT);
-            if (!template.isEmpty() && count > 0) {
-                IAEItemStack stack = getChannel().createStack(template);
-                if (stack != null) {
-                    stack.setStackSize(count);
-                    items.add(stack);
-                }
+            if (count <= 0) {
+                continue;
             }
+            // AE2UEL BasicCellInventory#loadCellItem と同じ扱い
+            IAEItemStack stack;
+            try {
+                // 未登録のアイテムは空のItemStack(air)として読み込まれる
+                ItemStack template = new ItemStack(entry.getCompoundTag(TAG_ITEM));
+                stack = template.isEmpty() ? null : getChannel().createStack(template);
+                if (stack == null) {
+                    ExampleMod.LOGGER.warn("[{}] DISK UUID={} からアイテム {} を削除します(この環境に存在しないアイテムのため)。",
+                            Tags.MOD_ID, uuid, entry);
+                    storage.removedOnLoad++;
+                    continue;
+                }
+            } catch (Throwable ex) {
+                if (AEConfig.instance().isRemoveCrashingItemsOnLoad()) {
+                    ExampleMod.LOGGER.warn("[{}] DISK UUID={} からアイテム {} を削除します(読み込み中にエラーが発生したため)。",
+                            Tags.MOD_ID, uuid, entry, ex);
+                    storage.removedOnLoad++;
+                    continue;
+                }
+                throw ex;
+            }
+            stack.setStackSize(count);
+            items.add(stack);
         }
         storage.items = items;
         storage.recalculate();

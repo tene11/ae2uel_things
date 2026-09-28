@@ -4,6 +4,9 @@ import appeng.api.AEApi;
 import appeng.api.storage.channels.IFluidStorageChannel;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IItemList;
+import appeng.core.AEConfig;
+import com.example.ae2uelthings.ExampleMod;
+import com.example.ae2uelthings.Tags;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.fluids.FluidStack;
@@ -16,6 +19,9 @@ import java.util.UUID;
  * <p>修正メモ(負荷対策): アイテム版 {@link DiskCellStorage} と同じく、合計量と格納タイプ数を
  * キャッシュしてO(1)で返すようにした。中身の増減は必ず {@link #insert} / {@link #extract} 経由で
  * 行うこと({@link #getFluids()} は読み取り専用)。</p>
+ *
+ * <p>読み込めないエントリの扱いは、アイテム版 {@link DiskCellStorage} と同じく
+ * AE2UEL標準セルの仕様に合わせている(存在しない液体は削除、読み込み中の例外は設定次第で削除)。</p>
  */
 public class DiskFluidCellStorage {
 
@@ -42,6 +48,9 @@ public class DiskFluidCellStorage {
     private long storedCount;
     /** stackSize > 0 のエントリ数=格納タイプ数(キャッシュ) */
     private int storedTypes;
+
+    /** 読み込み時に削除したエントリ数(AE2UEL標準セルと同じく、読めないエントリは削除する) */
+    private int removedOnLoad;
 
     public DiskFluidCellStorage(UUID uuid) {
         this.uuid = uuid;
@@ -106,6 +115,11 @@ public class DiskFluidCellStorage {
         return storedTypes;
     }
 
+    /** 読み込み時に削除したエントリ数(0なら削除なし)。 */
+    public int getRemovedOnLoad() {
+        return removedOnLoad;
+    }
+
     /** キャッシュを実データから数え直す(NBT読み込み直後に使う)。 */
     private void recalculate() {
         storedCount = 0;
@@ -156,21 +170,36 @@ public class DiskFluidCellStorage {
         IItemList<IAEFluidStack> fluids = getChannel().createList();
         for (int i = 0; i < list.tagCount(); i++) {
             NBTTagCompound entry = list.getCompoundTagAt(i);
-            FluidStack fs = FluidStack.loadFluidStackFromNBT(entry);
-            if (fs == null) {
-                continue;
-            }
             // 新形式(AmountMb)があればそれを優先。無ければ旧形式(int Amount、既に
             // 切り詰められている可能性がある過去データ)にフォールバックする。
-            long amount = entry.hasKey(TAG_AMOUNT_MB) ? entry.getLong(TAG_AMOUNT_MB) : fs.amount;
+            // (FluidStack#writeToNBT の Amount は int タグ)
+            long amount = entry.hasKey(TAG_AMOUNT_MB) ? entry.getLong(TAG_AMOUNT_MB) : entry.getInteger("Amount");
             if (amount <= 0) {
                 continue;
             }
-            IAEFluidStack stack = getChannel().createStack(fs);
-            if (stack != null) {
-                stack.setStackSize(amount);
-                fluids.add(stack);
+            // AE2UEL BasicCellInventory#loadCellItem と同じ扱い
+            IAEFluidStack stack;
+            try {
+                // 未登録の液体は null になる(FluidStack#loadFluidStackFromNBT)
+                FluidStack fs = FluidStack.loadFluidStackFromNBT(entry);
+                stack = fs == null ? null : getChannel().createStack(fs);
+                if (stack == null) {
+                    ExampleMod.LOGGER.warn("[{}] 液体DISK UUID={} から液体 {} を削除します(この環境に存在しない液体のため)。",
+                            Tags.MOD_ID, uuid, entry);
+                    storage.removedOnLoad++;
+                    continue;
+                }
+            } catch (Throwable ex) {
+                if (AEConfig.instance().isRemoveCrashingItemsOnLoad()) {
+                    ExampleMod.LOGGER.warn("[{}] 液体DISK UUID={} から液体 {} を削除します(読み込み中にエラーが発生したため)。",
+                            Tags.MOD_ID, uuid, entry, ex);
+                    storage.removedOnLoad++;
+                    continue;
+                }
+                throw ex;
             }
+            stack.setStackSize(amount);
+            fluids.add(stack);
         }
         storage.fluids = fluids;
         storage.recalculate();

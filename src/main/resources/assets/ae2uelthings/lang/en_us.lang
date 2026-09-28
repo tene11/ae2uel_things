@@ -35,8 +35,10 @@ item.ae2uelthings.disk_cell_fluid_max.name=Max DISK Fluid Cell
 item.ae2uelthings.disk_cell.upgrades.installed=Installed: %s
 item.ae2uelthings.disk_cell.upgrades.works_with_disk=DISK Cells
 item.ae2uelthings.disk_cell.upgrades.works_with_disk_fluid=Fluid DISK Cells
-item.ae2uelthings.disk_cell.unlimited_types=Unlimited
+item.ae2uelthings.disk_cell.unlimited_types=∞
 item.ae2uelthings.disk_cell.uuid=Disk UUID: %s
+item.ae2uelthings.disk_cell.locked=This DISK is locked to protect its data because the data could not be read. Check the server log.
+item.ae2uelthings.disk_cell.missing=The data for this DISK was not found in this world, so it cannot be disassembled (to keep its UUID). Insert something and extract it all to turn it back into a normal empty DISK.
 
 
 
@@ -49,6 +51,9 @@ command.ae2uelthings.getuuid.no_uuid=This DISK has not received a UUID yet (a UU
 command.ae2uelthings.getuuid.invalid_tag=The DiskUUID tag on this item is invalid: %s
 command.ae2uelthings.getuuid.prefix=UUID of this DISK:
 command.ae2uelthings.getuuid.hover=Click to put this UUID in your chat box (then Ctrl+A, Ctrl+C to copy)
+command.ae2uelthings.getuuid.unreadable=Warning: the data for this DISK could not be read, so the cell is locked. Check the server log.
+command.ae2uelthings.getuuid.load_failed=Warning: the DISK data file could not be read, so all DISKs are locked. Check the server log.
+command.ae2uelthings.getuuid.missing=Warning: the data for this DISK was not found in this world. The UUID is kept, so restoring the data file brings the contents back.
 
 command.ae2uelthings.recover.usage=Usage: /ae2uelthings recover <uuid> [tier]
 command.ae2uelthings.recover.invalid_uuid=Invalid UUID format: %s
@@ -59,6 +64,8 @@ command.ae2uelthings.recover.success.fluid=Recovered fluid DISK (tier: %s) with 
 command.ae2uelthings.recover.success.item.dropped=Recovered item DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
 command.ae2uelthings.recover.success.fluid.dropped=Recovered fluid DISK (tier: %s) with UUID %s for %s (inventory full, dropped on the ground).
 command.ae2uelthings.recover.not_found=No data found for UUID %s.
+command.ae2uelthings.recover.unreadable=Data for UUID %s exists but could not be read, so it cannot be recovered yet. Check the server log.
+command.ae2uelthings.recover.load_failed=The DISK data file could not be read, so recovery is disabled. Restore the data file from its .bak backup as described in the server log, then restart.
 command.ae2uelthings.recover.over_capacity=Warning: the stored data (%2$s bytes) exceeds the capacity of the %1$s tier (%3$s bytes). The cell will be treated as full (items can still be extracted). Specify a larger tier if needed.
 
 

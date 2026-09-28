@@ -37,8 +37,10 @@ item.ae2uelthings.disk_cell_fluid_max.name=21億DISK液体セル
 item.ae2uelthings.disk_cell.upgrades.installed=装着中: %s
 item.ae2uelthings.disk_cell.upgrades.works_with_disk=DISKセル
 item.ae2uelthings.disk_cell.upgrades.works_with_disk_fluid=液体DISKセル
-item.ae2uelthings.disk_cell.unlimited_types=無制限
+item.ae2uelthings.disk_cell.unlimited_types=∞
 item.ae2uelthings.disk_cell.uuid=DISK UUID: %s
+item.ae2uelthings.disk_cell.locked=このDISKはデータを読み込めないため、保護のためロックされています。サーバーログを確認してください。
+item.ae2uelthings.disk_cell.missing=このDISKのデータはこのワールドに見つからないため、UUIDを守るために分解できません。何かを入れて全部取り出すと、通常の空のDISKに戻ります。
 
 # --- CommandAe2uelThings ---
 command.ae2uelthings.help.recover=/ae2uelthings recover <uuid> [tier] - 指定UUIDのデータを保持する新しいDISKセルを生成します。tier: 1k/4k/16k/64k/256k/1024k/4096k/16384k/max(省略時は64k)。
@@ -49,6 +51,9 @@ command.ae2uelthings.getuuid.no_uuid=このDISKセルはまだUUIDが採番さ�
 command.ae2uelthings.getuuid.invalid_tag=このアイテムのDiskUUIDタグが不正です: %s
 command.ae2uelthings.getuuid.prefix=このDISKセルのUUID:
 command.ae2uelthings.getuuid.hover=クリックでチャット欄にUUIDを入力(Ctrl+A、Ctrl+Cでコピーできます)
+command.ae2uelthings.getuuid.unreadable=警告: このDISKのデータは読み込みに失敗しているため、セルはロックされています。サーバーログを確認してください。
+command.ae2uelthings.getuuid.load_failed=警告: DISKのデータファイルを読み込めなかったため、全DISKがロックされています。サーバーログを確認してください。
+command.ae2uelthings.getuuid.missing=警告: このDISKのデータはこのワールドに見つかりません。UUIDは保持されているので、データファイルを戻せば中身も戻ります。
 
 command.ae2uelthings.recover.usage=使い方: /ae2uelthings recover <uuid> [tier]
 command.ae2uelthings.recover.invalid_uuid=不正なUUID形式です: %s
@@ -59,6 +64,8 @@ command.ae2uelthings.recover.success.fluid=UUID %2$s の液体DISK(tier: %1$s)�
 command.ae2uelthings.recover.success.item.dropped=UUID %2$s のアイテムDISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
 command.ae2uelthings.recover.success.fluid.dropped=UUID %2$s の液体DISK(tier: %1$s)セルを %3$s へ復旧しました(インベントリが満杯のため足元にドロップしました)。
 command.ae2uelthings.recover.not_found=UUID %s のデータは見つかりませんでした。
+command.ae2uelthings.recover.unreadable=UUID %s のデータは存在しますが、読み込みに失敗しているため復旧できません。サーバーログを確認してください。
+command.ae2uelthings.recover.load_failed=DISKのデータファイルを読み込めなかったため、復旧は使えません。サーバーログの案内に従って .bak から戻し、再起動してください。
 command.ae2uelthings.recover.over_capacity=警告: 保存データ(%2$s byte)が tier %1$s の容量(%3$s byte)を超えています。セルは満杯扱いになります(中身の取り出しは可能)。必要に応じてより大きいtierを指定してください。
 
 
